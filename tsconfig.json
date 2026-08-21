@@ -25,6 +25,7 @@
 			"@pi-chorus/worktree": ["./packages/worktree/src/index.ts"],
 			"@pi-chorus/coordination": ["./packages/coordination/src/index.ts"],
 			"@pi-chorus/orchestrator": ["./packages/orchestrator/src/index.ts"],
+			"@pi-chorus/viewer": ["./packages/viewer/src/index.ts"],
 			"typebox": ["./node_modules/typebox"]
 		}
 	},

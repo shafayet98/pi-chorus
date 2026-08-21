@@ -1,20 +1,17 @@
 {
-	"name": "@pi-chorus/cli",
+	"name": "@pi-chorus/viewer",
 	"version": "0.1.0",
-	"description": "CLI for running, replaying, and viewing pi-chorus missions",
+	"description": "Local web viewer for pi-chorus trace data — swimlanes, causal DAG, roster timeline",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
-	"bin": {
-		"pi-chorus": "./dist/cli.js"
-	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "src/public"],
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
@@ -26,10 +23,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@pi-chorus/orchestrator": "^0.1.0",
-		"@pi-chorus/trace": "^0.1.0",
-		"@pi-chorus/tui": "^0.84.2",
-		"@pi-chorus/viewer": "^0.1.0"
+		"@pi-chorus/trace": "^0.1.0"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",

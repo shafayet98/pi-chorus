@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Orchestrator } from "@pi-chorus/orchestrator";
 import type { MissionConfig } from "@pi-chorus/orchestrator";
 import { TraceStore, createInMemoryDatabase } from "@pi-chorus/trace";
+import { ViewerServer } from "@pi-chorus/viewer";
 
 /**
  * CLI entry point for pi-chorus.
@@ -12,14 +13,8 @@ import { TraceStore, createInMemoryDatabase } from "@pi-chorus/trace";
  * Usage:
  *   pi-chorus run "Build a todo app" --gate "npm test && npm run build"
  *   pi-chorus replay <mission-id>
- *   pi-chorus view <mission-id>
+ *   pi-chorus view [--port 3000]
  *   pi-chorus list
- *
- * TODO: This is a scaffold. Full implementation will add:
- * - TUI with live agent status
- * - Trace replay
- * - Local web viewer launch
- * - Human-in-the-loop approval flow
  */
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
 	const { positionals, values } = parseArgs({
@@ -29,6 +24,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			gate: { type: "string" },
 			repo: { type: "string", default: "." },
 			catalog: { type: "string", default: "./roles" },
+			port: { type: "string", default: "3000" },
 			"max-agents": { type: "string" },
 			"human-approval": { type: "boolean", default: true },
 		},
@@ -68,16 +64,57 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			break;
 		}
 
+		case "view": {
+			// TODO: Connect to a persisted trace store (SQLite)
+			const traceDir = mkdtempSync(join(tmpdir(), "pi-chorus-view-"));
+			const traceStore = new TraceStore(createInMemoryDatabase(), traceDir);
+			const port = parseInt(values.port ?? "3000", 10);
+
+			const viewer = new ViewerServer({ traceStore, port });
+			const url = await viewer.start();
+			console.log(`Trace viewer running at ${url}`);
+			console.log("Press Ctrl+C to stop.");
+
+			// Keep the process alive
+			process.on("SIGINT", async () => {
+				await viewer.stop();
+				process.exit(0);
+			});
+			break;
+		}
+
+		case "replay": {
+			const missionId = positionals[1];
+			if (!missionId) {
+				console.error("Usage: pi-chorus replay <mission-id>");
+				process.exit(1);
+			}
+
+			// TODO: Connect to a persisted trace store
+			const traceDir = mkdtempSync(join(tmpdir(), "pi-chorus-replay-"));
+			const traceStore = new TraceStore(createInMemoryDatabase(), traceDir);
+
+			const events = traceStore.getEventsByMission(missionId);
+			if (events.length === 0) {
+				console.log(`No events found for mission ${missionId}`);
+				break;
+			}
+
+			for (const event of events) {
+				const payload = traceStore.getPayload(event.payloadHash);
+				console.log(JSON.stringify({
+					clock: event.clock,
+					agent: event.agentId,
+					kind: event.kind,
+					causes: event.causes,
+					payload,
+				}));
+			}
+			break;
+		}
+
 		case "list":
 			console.log("TODO: List past missions from trace store");
-			break;
-
-		case "replay":
-			console.log("TODO: Replay mission from trace store");
-			break;
-
-		case "view":
-			console.log("TODO: Launch local web viewer");
 			break;
 
 		default:
@@ -85,9 +122,9 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			console.log("");
 			console.log("Commands:");
 			console.log('  run <description> --gate <cmd>  Run a mission');
-			console.log("  list                            List past missions");
+			console.log("  view [--port 3000]              Launch trace viewer");
 			console.log("  replay <mission-id>             Replay a mission trace");
-			console.log("  view <mission-id>               Open trace viewer");
+			console.log("  list                            List past missions");
 			break;
 	}
 }
