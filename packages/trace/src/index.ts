@@ -1,5 +1,6 @@
 export { LamportClock } from "./lamport-clock.ts";
-export { TraceStore } from "./trace-store.ts";
+export { TraceStore, createInMemoryDatabase } from "./trace-store.ts";
+export type { Database, Statement } from "./trace-store.ts";
 export { ContentStore } from "./content-store.ts";
 export type {
 	TraceEvent,
