@@ -9,10 +9,12 @@ import {
 	type AgentHarnessTool,
 } from "@pi-chorus/agent-core";
 import { streamSimple, getModel } from "@pi-chorus/ai/compat";
-import type { RoleDefinition } from "@pi-chorus/coordination";
-import type { LeaseManager } from "@pi-chorus/coordination";
+import type { RoleDefinition, AgentMessage as CoordMessage } from "@pi-chorus/coordination";
+import type { LeaseManager, MessageBus, CapabilityRegistry } from "@pi-chorus/coordination";
 import type { TraceStore } from "@pi-chorus/trace";
 import type { TSchema } from "typebox";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 /**
  * Binds a harness tool (which expects a context argument) into a regular AgentTool.
@@ -39,6 +41,9 @@ function bindHarnessTool<TContext extends object>(
  * Wraps pi-agent-core's Agent with:
  * - Scoped tools pointed at the worktree path
  * - Write/edit tools intercepted by the lease manager
+ * - Coordination tools: send, read_messages, claim, release, signal_done
+ * - Scratch space tools: read_scratch, write_scratch
+ * - request_capability tool for requesting specialist agents
  * - Trace event emission on agent lifecycle events
  */
 export interface AgentRunnerOptions {
@@ -56,6 +61,14 @@ export interface AgentRunnerOptions {
 	traceStore: TraceStore;
 	/** Mission ID for trace correlation */
 	missionId: string;
+	/** Message bus for agent-to-agent communication */
+	messageBus?: MessageBus;
+	/** Capability registry for requesting specialist agents */
+	capabilityRegistry?: CapabilityRegistry;
+	/** Path to the shared scratch space */
+	scratchPath?: string;
+	/** Callback when this agent requests a capability */
+	onCapabilityRequest?: (capability: string, reason: string) => void;
 }
 
 export interface AgentRunResult {
@@ -71,6 +84,8 @@ export class AgentRunner {
 	private readonly options: AgentRunnerOptions;
 	private agent: Agent | null = null;
 	private env: NodeExecutionEnv | null = null;
+	private readonly inbox: CoordMessage[] = [];
+	private unsubscribeMessages?: () => void;
 
 	constructor(options: AgentRunnerOptions) {
 		this.options = options;
@@ -78,10 +93,21 @@ export class AgentRunner {
 
 	/** Run the agent with its mandate. */
 	async run(): Promise<AgentRunResult> {
-		const { agentId, role, mandate, worktreePath, leaseManager, traceStore, missionId } = this.options;
+		const { agentId, role, mandate, worktreePath, leaseManager, traceStore, missionId, messageBus } = this.options;
 
 		// Emit lifecycle start
 		traceStore.emit(agentId, "lifecycle.start", { role: role.name, mandate }, [], missionId);
+
+		// Subscribe to incoming messages
+		if (messageBus) {
+			this.unsubscribeMessages = messageBus.subscribe(agentId, (msg) => {
+				this.inbox.push(msg);
+				traceStore.emit(agentId, "message.deliver", {
+					from: msg.from,
+					type: msg.type,
+				}, [], missionId);
+			});
+		}
 
 		// Create execution environment pointed at the worktree
 		this.env = new NodeExecutionEnv({ cwd: worktreePath });
@@ -156,6 +182,7 @@ export class AgentRunner {
 				error: e.message,
 			};
 		} finally {
+			this.unsubscribeMessages?.();
 			await this.env.cleanup();
 		}
 	}
@@ -166,7 +193,8 @@ export class AgentRunner {
 	}
 
 	private createTools(context: ExecutionToolContext): AgentTool[] {
-		const { agentId, role, leaseManager, traceStore, missionId } = this.options;
+		const { agentId, role, leaseManager, traceStore, missionId, messageBus, capabilityRegistry, scratchPath } =
+			this.options;
 
 		// Bind harness tools to the execution context
 		const readTool = bindHarnessTool(createReadTool(), context);
@@ -216,7 +244,8 @@ export class AgentRunner {
 			},
 		};
 
-		// Claim tool — lets the agent request file leases
+		// --- Coordination tools ---
+
 		const claimTool: AgentTool = {
 			name: "claim",
 			label: "claim",
@@ -254,7 +283,6 @@ export class AgentRunner {
 			},
 		};
 
-		// Release tool
 		const releaseTool: AgentTool = {
 			name: "release",
 			label: "release",
@@ -281,7 +309,6 @@ export class AgentRunner {
 			},
 		};
 
-		// Signal done tool — terminates the agent loop
 		const doneTool: AgentTool = {
 			name: "signal_done",
 			label: "signal_done",
@@ -292,6 +319,213 @@ export class AgentRunner {
 					content: [{ type: "text" as const, text: "Work complete. Signaling done." }],
 					details: { done: true },
 					terminate: true,
+				};
+			},
+		};
+
+		// --- Messaging tools ---
+
+		const sendTool: AgentTool = {
+			name: "send",
+			label: "send",
+			description:
+				"Send a typed message to another agent. Use this for direct agent-to-agent communication. " +
+				"Message types: INFO (general info), REQUEST_INTERFACE (ask for an interface definition), " +
+				"PROPOSE (propose a decision), BLOCKED_ON (signal a dependency).",
+			parameters: {
+				type: "object",
+				properties: {
+					to: { type: "string", description: 'Target agent ID (e.g., "backend#1")' },
+					type: {
+						type: "string",
+						enum: ["INFO", "REQUEST_INTERFACE", "PROPOSE", "BLOCKED_ON"],
+						description: "Message type",
+					},
+					content: { type: "string", description: "Message content" },
+				},
+				required: ["to", "type", "content"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { to, type, content } = params as { to: string; type: any; content: string };
+				if (!messageBus) {
+					return {
+						content: [{ type: "text" as const, text: "Messaging is not available in this run." }],
+						details: { error: "no_message_bus" },
+					};
+				}
+
+				const clock = traceStore.clockFor(agentId).tick();
+				const msg = messageBus.send(agentId, to, type, { content }, clock);
+				traceStore.emit(
+					agentId,
+					"message.send",
+					{ to, messageType: type, messageId: msg.id },
+					[],
+					missionId,
+				);
+
+				return {
+					content: [{ type: "text" as const, text: `Sent ${type} message to ${to}.` }],
+					details: { messageId: msg.id, to, type },
+				};
+			},
+		};
+
+		const readMessagesTool: AgentTool = {
+			name: "read_messages",
+			label: "read_messages",
+			description:
+				"Read messages from your inbox. Returns all unread messages from other agents. " +
+				"Messages are consumed on read — they won't appear again.",
+			parameters: { type: "object", properties: {}, required: [] } as unknown as TSchema,
+			execute: async () => {
+				const messages = this.inbox.splice(0);
+				for (const msg of messages) {
+					traceStore.emit(agentId, "message.consume", {
+						from: msg.from,
+						type: msg.type,
+						messageId: msg.id,
+					}, [], missionId);
+				}
+
+				if (messages.length === 0) {
+					return {
+						content: [{ type: "text" as const, text: "No new messages." }],
+						details: { count: 0 },
+					};
+				}
+
+				const formatted = messages
+					.map((m) => `[${m.type}] from ${m.from}: ${(m.payload as any)?.content ?? JSON.stringify(m.payload)}`)
+					.join("\n");
+
+				return {
+					content: [{ type: "text" as const, text: `${messages.length} message(s):\n${formatted}` }],
+					details: { count: messages.length, messages },
+				};
+			},
+		};
+
+		// --- Capability request tool ---
+
+		const requestCapabilityTool: AgentTool = {
+			name: "request_capability",
+			label: "request_capability",
+			description:
+				"Request a specialist agent for a capability you need (e.g., 'database', 'testing', 'api-schema'). " +
+				"The orchestrator will check the capability registry and spawn an agent if needed.",
+			parameters: {
+				type: "object",
+				properties: {
+					capability: { type: "string", description: "The capability tag needed" },
+					reason: { type: "string", description: "Why you need this capability" },
+				},
+				required: ["capability", "reason"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { capability, reason } = params as { capability: string; reason: string };
+				traceStore.emit(agentId, "capability.request", { capability, reason }, [], missionId);
+
+				// Check if an agent with this capability already exists
+				if (capabilityRegistry) {
+					const existing = capabilityRegistry.findByCapability(capability);
+					if (existing) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Agent "${existing.agentId}" (role: ${existing.roleName}) already provides "${capability}". You can send messages to them directly.`,
+								},
+							],
+							details: { existing: existing.agentId, capability },
+						};
+					}
+				}
+
+				// Notify the orchestrator
+				this.options.onCapabilityRequest?.(capability, reason);
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Requested capability "${capability}". The orchestrator will handle spawning if a matching role exists. Continue with other work in the meantime.`,
+						},
+					],
+					details: { capability, reason, requested: true },
+				};
+			},
+		};
+
+		// --- Scratch space tools ---
+
+		const readScratchTool: AgentTool = {
+			name: "read_scratch",
+			label: "read_scratch",
+			description:
+				"Read a file from the shared scratch space. Use this to read data shared by other agents " +
+				"(e.g., generated schemas, interface stubs) before their worktrees are merged.",
+			parameters: {
+				type: "object",
+				properties: {
+					path: { type: "string", description: "Relative path within scratch space" },
+				},
+				required: ["path"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const relativePath = (params as any).path as string;
+				if (!scratchPath) {
+					return {
+						content: [{ type: "text" as const, text: "Scratch space is not configured." }],
+						details: { error: "no_scratch" },
+					};
+				}
+				const fullPath = join(scratchPath, relativePath);
+				if (!existsSync(fullPath)) {
+					return {
+						content: [{ type: "text" as const, text: `File not found in scratch space: ${relativePath}` }],
+						details: { error: "not_found", path: relativePath },
+					};
+				}
+				const content = readFileSync(fullPath, "utf-8");
+				return {
+					content: [{ type: "text" as const, text: content }],
+					details: { path: relativePath, size: content.length },
+				};
+			},
+		};
+
+		const writeScratchTool: AgentTool = {
+			name: "write_scratch",
+			label: "write_scratch",
+			description:
+				"Write a file to the shared scratch space. Use this to share data with other agents " +
+				"(e.g., generated schemas, interface definitions) before your worktree is merged.",
+			parameters: {
+				type: "object",
+				properties: {
+					path: { type: "string", description: "Relative path within scratch space" },
+					content: { type: "string", description: "File content to write" },
+				},
+				required: ["path", "content"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { path: relativePath, content: fileContent } = params as { path: string; content: string };
+				if (!scratchPath) {
+					return {
+						content: [{ type: "text" as const, text: "Scratch space is not configured." }],
+						details: { error: "no_scratch" },
+					};
+				}
+				const fullPath = join(scratchPath, relativePath);
+				const dir = dirname(fullPath);
+				if (!existsSync(dir)) {
+					mkdirSync(dir, { recursive: true });
+				}
+				writeFileSync(fullPath, fileContent, "utf-8");
+				return {
+					content: [{ type: "text" as const, text: `Written to scratch: ${relativePath}` }],
+					details: { path: relativePath, size: fileContent.length },
 				};
 			},
 		};
@@ -311,7 +545,12 @@ export class AgentRunner {
 		}
 
 		// Always include coordination tools
-		enabledTools.push(claimTool, releaseTool, doneTool);
+		enabledTools.push(claimTool, releaseTool, doneTool, sendTool, readMessagesTool, requestCapabilityTool);
+
+		// Include scratch tools if scratch space is configured
+		if (scratchPath) {
+			enabledTools.push(readScratchTool, writeScratchTool);
+		}
 
 		return enabledTools;
 	}
@@ -350,7 +589,7 @@ export class AgentRunner {
 	}
 
 	private buildSystemPrompt(role: RoleDefinition, agentId: string): string {
-		return [
+		const sections = [
 			role.systemPrompt,
 			"",
 			`You are agent instance "${agentId}" (role: ${role.name}).`,
@@ -359,11 +598,26 @@ export class AgentRunner {
 			"Available coordination tools:",
 			"- claim(paths): Claim file paths before writing to them",
 			"- release(paths): Release file claims when done with files",
+			"- send(to, type, content): Send a message to another agent",
+			"- read_messages(): Read messages from your inbox",
+			"- request_capability(capability, reason): Request a specialist agent",
 			"- signal_done(): Signal that your work is complete",
+		];
+
+		if (this.options.scratchPath) {
+			sections.push(
+				"- read_scratch(path): Read shared data from scratch space",
+				"- write_scratch(path, content): Write shared data to scratch space",
+			);
+		}
+
+		sections.push(
 			"",
 			`Your path scope (files you are allowed to claim): ${role.pathScope.join(", ")}`,
 			"",
-			"IMPORTANT: Always claim files before writing to them. Always call signal_done() when finished.",
-		].join("\n");
+			"IMPORTANT: Always claim files before writing. Use send() to coordinate with other agents. Call signal_done() when finished.",
+		);
+
+		return sections.join("\n");
 	}
 }
