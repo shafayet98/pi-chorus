@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { MessageBus, LeaseManager, CapabilityRegistry } from "@pi-chorus/coordination";
+import { MessageBus, LeaseManager, CapabilityRegistry, RoomManager } from "@pi-chorus/coordination";
 import type { RoleDefinition } from "@pi-chorus/coordination";
 import { WorktreeManager, VerificationGate } from "@pi-chorus/worktree";
 import type { TraceStore } from "@pi-chorus/trace";
@@ -54,6 +54,7 @@ export class Orchestrator {
 	private readonly messageBus = new MessageBus();
 	private readonly leaseManager = new LeaseManager();
 	private readonly capabilityRegistry = new CapabilityRegistry();
+	private readonly roomManager: RoomManager;
 
 	private mission: Mission | null = null;
 	private worktreeManager: WorktreeManager | null = null;
@@ -66,6 +67,7 @@ export class Orchestrator {
 		this.traceStore = traceStore;
 		this.catalog = new RoleCatalog(config.catalogPath);
 		this.decomposer = new TaskDecomposer(config.decomposerModel ?? "sonnet");
+		this.roomManager = new RoomManager(this.messageBus);
 		this.caps = {
 			maxAgents: config.maxAgents ?? DEFAULT_CAPS.maxAgents,
 			maxRepairRounds: config.maxRepairRounds ?? DEFAULT_CAPS.maxRepairRounds,
@@ -182,6 +184,9 @@ export class Orchestrator {
 			// Handle mid-run capability requests
 			await this.handleCapabilityRequests(missionId);
 
+			// Arbitrate any expired rooms
+			this.arbitrateExpiredRooms(missionId);
+
 			// Merge successful agents
 			const mergeFailures: string[] = [];
 			for (const [agentId, result] of allAgentResults) {
@@ -276,6 +281,11 @@ export class Orchestrator {
 		return this.capabilityRegistry;
 	}
 
+	/** Get the room manager (for testing/inspection). */
+	getRoomManager(): RoomManager {
+		return this.roomManager;
+	}
+
 	private spawnAgent(
 		subtask: Subtask,
 		missionId: string,
@@ -340,6 +350,8 @@ export class Orchestrator {
 			missionId,
 			messageBus: this.messageBus,
 			capabilityRegistry: this.capabilityRegistry,
+			roomManager: this.roomManager,
+			initialDecisions: this.roomManager.getAllDecisions(),
 			scratchPath: this.worktreeManager!.getScratchPath(),
 			onCapabilityRequest: (capability, reason) => {
 				this.capabilityRequests.push({ agentId, capability, reason });
@@ -406,6 +418,44 @@ export class Orchestrator {
 						content: `Agent ${spawned.agentId} failed: ${result.error}`,
 					}, this.traceStore.clockFor("orchestrator").tick());
 				}
+			}
+		}
+	}
+
+	/**
+	 * Arbitrate rooms that hit their turn budget.
+	 * The orchestrator steps in, makes the decision, and writes the record.
+	 */
+	private arbitrateExpiredRooms(missionId: string): void {
+		const expired = this.roomManager.getExpiredRooms();
+		for (const room of expired) {
+			// Orchestrator makes the decision based on the room context
+			const decision = this.roomManager.resolve(
+				room.id,
+				`Orchestrator arbitration: proceeding with the last proposal for "${room.question}".`,
+				`Room "${room.topic}" exhausted its turn budget (${room.turnBudget} turns). The orchestrator is arbitrating to unblock progress.`,
+				[], // No dissents recorded in automated arbitration
+			);
+
+			this.traceStore.emit("orchestrator", "room.resolve", {
+				roomId: room.id,
+				decisionId: decision.id,
+				arbitrated: true,
+			}, [], missionId);
+
+			this.traceStore.emit("orchestrator", "decision.record", {
+				decisionId: decision.id,
+				question: room.question,
+				decision: decision.decision,
+				arbitrated: true,
+				participants: room.members,
+			}, [], missionId);
+
+			// Notify all room members
+			for (const member of room.members) {
+				this.messageBus.send("orchestrator", member, "INFO", {
+					content: `Room "${room.topic}" was arbitrated by the orchestrator. Decision: ${decision.decision}. Use read_decision("${decision.id}") for details.`,
+				}, this.traceStore.clockFor("orchestrator").tick());
 			}
 		}
 	}
