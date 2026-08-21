@@ -8,4 +8,6 @@ export type { AgentSpec, MultiAgentResult, MultiAgentRunnerOptions } from "./mul
 export type { DecompositionPlan, Subtask } from "./task-decomposer.ts";
 export { Watchdog } from "./watchdog.ts";
 export type { WaitEdge, DeadlockInfo, AgentHealth } from "./watchdog.ts";
+export { buildBriefing } from "./briefing.ts";
+export type { BriefingContext, FailureContext } from "./briefing.ts";
 export type { Mission, MissionConfig, MissionResult, MissionStatus, AgentInstance } from "./types.ts";

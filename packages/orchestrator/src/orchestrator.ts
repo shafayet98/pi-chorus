@@ -11,6 +11,9 @@ import { RoleCatalog } from "./role-catalog.ts";
 import { TaskDecomposer } from "./task-decomposer.ts";
 import type { DecompositionPlan, Subtask } from "./task-decomposer.ts";
 import type { MissionConfig, Mission, MissionResult, AgentInstance } from "./types.ts";
+import { Watchdog } from "./watchdog.ts";
+import { buildBriefing } from "./briefing.ts";
+import type { BriefingContext } from "./briefing.ts";
 
 /**
  * Configuration for the orchestrator's safety caps.
@@ -56,10 +59,14 @@ export class Orchestrator {
 	private readonly capabilityRegistry = new CapabilityRegistry();
 	private readonly roomManager: RoomManager;
 
+	private readonly watchdog: Watchdog;
+
 	private mission: Mission | null = null;
 	private worktreeManager: WorktreeManager | null = null;
 	private readonly runners = new Map<string, AgentRunner>();
 	private readonly capabilityRequests: Array<{ agentId: string; capability: string; reason: string }> = [];
+	private readonly respawnCounts = new Map<string, number>(); // subtask name → attempt count
+	private readonly maxRespawns = 2;
 	private spawnDepth = 0;
 
 	constructor(config: MissionConfig, traceStore: TraceStore) {
@@ -68,6 +75,7 @@ export class Orchestrator {
 		this.catalog = new RoleCatalog(config.catalogPath);
 		this.decomposer = new TaskDecomposer(config.decomposerModel ?? "sonnet");
 		this.roomManager = new RoomManager(this.messageBus);
+		this.watchdog = new Watchdog(config.agentTimeoutMs ?? 5 * 60 * 1000);
 		this.caps = {
 			maxAgents: config.maxAgents ?? DEFAULT_CAPS.maxAgents,
 			maxRepairRounds: config.maxRepairRounds ?? DEFAULT_CAPS.maxRepairRounds,
@@ -105,6 +113,19 @@ export class Orchestrator {
 			startedAt: startTime,
 			agents: [],
 		};
+
+		// Subscribe to BLOCKED_ON messages to track wait edges
+		const unsubscribeBus = this.messageBus.subscribeAll((msg) => {
+			if (msg.type === "BLOCKED_ON") {
+				this.watchdog.addWait(msg.from, msg.to);
+				this.traceStore.emit(msg.from, "wait.begin", {
+					waitingFor: msg.to,
+				}, [], missionId);
+			}
+			if (msg.type === "DONE") {
+				this.watchdog.removeWait(msg.from);
+			}
+		});
 
 		this.traceStore.emit("orchestrator", "lifecycle.start", {
 			mission: this.config.description,
@@ -175,11 +196,47 @@ export class Orchestrator {
 				}
 			}
 
-			// Wait for all agents
+			// Wait for all agents and handle failures
 			for (const [agentId, promise] of agentPromises) {
+				this.watchdog.recordActivity(agentId);
 				const result = await promise;
 				allAgentResults.set(agentId, result);
+				this.watchdog.removeAgent(agentId);
+
+				// Handle agent failure: release leases, attempt respawn
+				if (!result.success) {
+					this.leaseManager.release(agentId);
+					this.traceStore.emit("orchestrator", "lifecycle.crash", {
+						agentId,
+						error: result.error,
+					}, [], missionId);
+
+					// Find the subtask for this agent
+					const instance = this.mission!.agents.find((a) => a.id === agentId);
+					if (instance) {
+						const subtaskName = instance.mandate;
+						const attempts = (this.respawnCounts.get(subtaskName) ?? 0) + 1;
+						this.respawnCounts.set(subtaskName, attempts);
+
+						if (attempts <= this.maxRespawns) {
+							// Respawn with failure context
+							const respawned = this.respawnAgent(instance, result.error ?? "unknown", attempts, missionId);
+							if (respawned) {
+								agentPromises.set(respawned.agentId, respawned.promise);
+							}
+						} else {
+							this.traceStore.emit("orchestrator", "lifecycle.crash", {
+								agentId,
+								reason: "max_respawns_exceeded",
+								attempts,
+							}, [], missionId);
+						}
+					}
+				}
 			}
+
+			// Detect and resolve deadlocks
+			this.resolveDeadlocks(missionId);
 
 			// Handle mid-run capability requests
 			await this.handleCapabilityRequests(missionId);
@@ -241,6 +298,9 @@ export class Orchestrator {
 				this.cleanupAgent(agentId);
 			}
 		}
+
+		// Cleanup bus subscription
+		unsubscribeBus();
 
 		// Final status
 		this.mission.status = gatePassed ? "succeeded" : "failed";
@@ -458,6 +518,98 @@ export class Orchestrator {
 				}, this.traceStore.clockFor("orchestrator").tick());
 			}
 		}
+	}
+
+	/**
+	 * Respawn a failed agent with failure context in its briefing.
+	 */
+	private respawnAgent(
+		failedInstance: AgentInstance,
+		error: string,
+		attempt: number,
+		missionId: string,
+	): { agentId: string; promise: Promise<AgentRunResult> } | null {
+		if (this.capabilityRegistry.getActiveCount() >= this.caps.maxAgents) {
+			return null;
+		}
+
+		const briefingCtx: BriefingContext = {
+			mandate: failedInstance.mandate,
+			decisions: this.roomManager.getAllDecisions(),
+			activeAgents: this.capabilityRegistry.getActiveAgents(),
+			failureContext: {
+				error,
+				attempt,
+				maxAttempts: this.maxRespawns,
+			},
+		};
+
+		const subtask: Subtask = {
+			name: `respawn-${failedInstance.roleName}`,
+			roleName: failedInstance.roleName,
+			mandate: buildBriefing(briefingCtx),
+			dependsOn: [],
+		};
+
+		this.traceStore.emit("orchestrator", "agent.spawn", {
+			agentId: `${failedInstance.roleName} (respawn #${attempt})`,
+			roleName: failedInstance.roleName,
+			reason: "respawn_after_failure",
+			previousError: error,
+			attempt,
+		}, [], missionId);
+
+		return this.spawnAgentFromRole(failedInstance.role, subtask, missionId);
+	}
+
+	/**
+	 * Detect deadlocks in the wait-for graph and kill the youngest agent in each cycle.
+	 */
+	private resolveDeadlocks(missionId: string): void {
+		const deadlocks = this.watchdog.detectDeadlocks();
+		for (const deadlock of deadlocks) {
+			this.traceStore.emit("orchestrator", "lifecycle.crash", {
+				reason: "deadlock_detected",
+				cycle: deadlock.cycle,
+				killed: deadlock.youngest,
+			}, [], missionId);
+
+			// Kill the youngest agent in the cycle
+			const runner = this.runners.get(deadlock.youngest);
+			if (runner) {
+				runner.abort();
+			}
+			this.cleanupAgent(deadlock.youngest);
+
+			// Notify other agents in the cycle
+			for (const agentId of deadlock.cycle) {
+				if (agentId !== deadlock.youngest) {
+					this.messageBus.send("orchestrator", agentId, "INFO", {
+						content: `Deadlock detected. Agent ${deadlock.youngest} was terminated to break the cycle. You may proceed.`,
+					}, this.traceStore.clockFor("orchestrator").tick());
+				}
+			}
+		}
+
+		// Also check for timed-out waits
+		const timedOut = this.watchdog.getTimedOutWaits();
+		for (const edge of timedOut) {
+			this.traceStore.emit("orchestrator", "wait.end", {
+				agentId: edge.waiter,
+				waitingFor: edge.waitingFor,
+				reason: "timeout",
+			}, [], missionId);
+			this.watchdog.removeWait(edge.waiter);
+
+			this.messageBus.send("orchestrator", edge.waiter, "INFO", {
+				content: `Your wait for ${edge.waitingFor} timed out. Proceed without it or try an alternative approach.`,
+			}, this.traceStore.clockFor("orchestrator").tick());
+		}
+	}
+
+	/** Get the watchdog (for testing/inspection). */
+	getWatchdog(): Watchdog {
+		return this.watchdog;
 	}
 
 	private getIndependentSubtasks(plan: DecompositionPlan): Subtask[] {

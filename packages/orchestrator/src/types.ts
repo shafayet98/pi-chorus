@@ -44,6 +44,8 @@ export interface MissionConfig {
 	humanApproval?: boolean;
 	/** Model to use for task decomposition (default: "sonnet") */
 	decomposerModel?: string;
+	/** Timeout for individual agents in ms (default: 5 minutes) */
+	agentTimeoutMs?: number;
 }
 
 export interface MissionResult {
