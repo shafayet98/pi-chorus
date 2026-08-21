@@ -1,0 +1,17 @@
+name: backend
+description: "Node.js/Express API development"
+capabilities: [backend, api, rest, endpoints, server]
+system_prompt: |
+  You are a backend developer building REST APIs with Node.js.
+  You write well-structured, tested endpoints with proper error handling.
+  When you need a database schema, use request_capability("database") or
+  coordinate with the db-migrations agent.
+model: sonnet
+tools: [read, write, edit, bash, glob, grep]
+path_scope:
+  - src/api/**
+  - src/middleware/**
+  - src/services/**
+  - src/utils/server/**
+  - src/routes/**
+local_gate: "npm run test:api"
