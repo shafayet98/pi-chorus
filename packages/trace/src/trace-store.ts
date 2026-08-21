@@ -23,6 +23,17 @@ export interface Statement {
 	get(...params: any[]): any;
 }
 
+export interface MissionRecord {
+	id: string;
+	description: string;
+	status: string;
+	startedAt: number;
+	endedAt?: number;
+	agentCount: number;
+	totalTokens: number;
+	gatePassed: boolean;
+}
+
 export class TraceStore {
 	private readonly db: Database;
 	private readonly contentStore: ContentStore;
@@ -52,6 +63,74 @@ export class TraceStore {
 			CREATE INDEX IF NOT EXISTS idx_events_mission ON events(mission_id);
 			CREATE INDEX IF NOT EXISTS idx_events_clock ON events(clock);
 		`);
+		this.db.exec(`
+			CREATE TABLE IF NOT EXISTS missions (
+				id TEXT PRIMARY KEY,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL,
+				started_at INTEGER NOT NULL,
+				ended_at INTEGER,
+				agent_count INTEGER NOT NULL DEFAULT 0,
+				total_tokens INTEGER NOT NULL DEFAULT 0,
+				gate_passed INTEGER NOT NULL DEFAULT 0
+			);
+		`);
+	}
+
+	/** Save or update a mission record. */
+	saveMission(mission: MissionRecord): void {
+		// Upsert: try insert, if exists update
+		// Our in-memory DB doesn't support ON CONFLICT, so delete + insert
+		try {
+			this.db.prepare("DELETE FROM missions WHERE id = ?").run(mission.id);
+		} catch {
+			// Table might not support delete in some implementations
+		}
+		this.db.prepare(
+			"INSERT INTO missions (id, description, status, started_at, ended_at, agent_count, total_tokens, gate_passed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		).run(
+			mission.id,
+			mission.description,
+			mission.status,
+			mission.startedAt,
+			mission.endedAt ?? null,
+			mission.agentCount,
+			mission.totalTokens,
+			mission.gatePassed ? 1 : 0,
+		);
+	}
+
+	/** Get all missions, most recent first. */
+	listMissions(): MissionRecord[] {
+		const rows = this.db.prepare("SELECT * FROM missions").all();
+		// Sort in JS since in-memory DB may not support ORDER BY
+		rows.sort((a: any, b: any) => (b.started_at ?? 0) - (a.started_at ?? 0));
+		return rows.map((r: any) => ({
+			id: r.id,
+			description: r.description,
+			status: r.status,
+			startedAt: r.started_at,
+			endedAt: r.ended_at,
+			agentCount: r.agent_count,
+			totalTokens: r.total_tokens,
+			gatePassed: r.gate_passed === 1,
+		}));
+	}
+
+	/** Get a single mission record. */
+	getMission(id: string): MissionRecord | null {
+		const row = this.db.prepare("SELECT * FROM missions WHERE id = ?").get(id);
+		if (!row) return null;
+		return {
+			id: (row as any).id,
+			description: (row as any).description,
+			status: (row as any).status,
+			startedAt: (row as any).started_at,
+			endedAt: (row as any).ended_at,
+			agentCount: (row as any).agent_count,
+			totalTokens: (row as any).total_tokens,
+			gatePassed: (row as any).gate_passed === 1,
+		};
 	}
 
 	/** Get or create a Lamport clock for an agent. */

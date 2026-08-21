@@ -10,4 +10,6 @@ export { Watchdog } from "./watchdog.ts";
 export type { WaitEdge, DeadlockInfo, AgentHealth } from "./watchdog.ts";
 export { buildBriefing } from "./briefing.ts";
 export type { BriefingContext, FailureContext } from "./briefing.ts";
+export { AutoApprover, InteractiveApprover } from "./approval.ts";
+export type { Approver, MissionSummary } from "./approval.ts";
 export type { Mission, MissionConfig, MissionResult, MissionStatus, AgentInstance } from "./types.ts";

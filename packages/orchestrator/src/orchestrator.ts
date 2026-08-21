@@ -14,6 +14,8 @@ import type { MissionConfig, Mission, MissionResult, AgentInstance } from "./typ
 import { Watchdog } from "./watchdog.ts";
 import { buildBriefing } from "./briefing.ts";
 import type { BriefingContext } from "./briefing.ts";
+import { AutoApprover } from "./approval.ts";
+import type { Approver } from "./approval.ts";
 
 /**
  * Configuration for the orchestrator's safety caps.
@@ -60,6 +62,7 @@ export class Orchestrator {
 	private readonly roomManager: RoomManager;
 
 	private readonly watchdog: Watchdog;
+	private readonly approver: Approver;
 
 	private mission: Mission | null = null;
 	private worktreeManager: WorktreeManager | null = null;
@@ -69,13 +72,14 @@ export class Orchestrator {
 	private readonly maxRespawns = 2;
 	private spawnDepth = 0;
 
-	constructor(config: MissionConfig, traceStore: TraceStore) {
+	constructor(config: MissionConfig, traceStore: TraceStore, approver?: Approver) {
 		this.config = config;
 		this.traceStore = traceStore;
 		this.catalog = new RoleCatalog(config.catalogPath);
 		this.decomposer = new TaskDecomposer(config.decomposerModel ?? "sonnet");
 		this.roomManager = new RoomManager(this.messageBus);
 		this.watchdog = new Watchdog(config.agentTimeoutMs ?? 5 * 60 * 1000);
+		this.approver = approver ?? new AutoApprover();
 		this.caps = {
 			maxAgents: config.maxAgents ?? DEFAULT_CAPS.maxAgents,
 			maxRepairRounds: config.maxRepairRounds ?? DEFAULT_CAPS.maxRepairRounds,
@@ -157,6 +161,24 @@ export class Orchestrator {
 			subtasks: plan.subtasks.map((s) => ({ name: s.name, role: s.roleName })),
 			notes: plan.notes,
 		}, [], missionId);
+
+		// 4b. Human approval of the plan
+		const approved = await this.approver.approvePlan(plan);
+		if (!approved) {
+			this.mission.status = "aborted";
+			this.mission.endedAt = Date.now();
+			this.traceStore.emit("orchestrator", "lifecycle.stop", {
+				status: "aborted",
+				reason: "plan_rejected",
+			}, [], missionId);
+			return {
+				mission: this.mission,
+				gatePassed: false,
+				totalTokens: 0,
+				wallTimeMs: Date.now() - startTime,
+				repairRounds: 0,
+			};
+		}
 
 		// 5. Execute with repair loop
 		this.mission.status = "running";
@@ -312,13 +334,38 @@ export class Orchestrator {
 			wallTimeMs: Date.now() - startTime,
 		}, [], missionId);
 
-		return {
+		const finalResult = {
 			mission: this.mission,
 			gatePassed,
 			totalTokens,
 			wallTimeMs: Date.now() - startTime,
 			repairRounds: repairRound,
 		};
+
+		// Persist mission record
+		this.traceStore.saveMission({
+			id: missionId,
+			description: this.config.description,
+			status: this.mission.status,
+			startedAt: startTime,
+			endedAt: this.mission.endedAt,
+			agentCount: this.mission.agents.length,
+			totalTokens,
+			gatePassed,
+		});
+
+		// Notify approver
+		this.approver.onMissionComplete({
+			missionId,
+			status: this.mission.status as "succeeded" | "failed",
+			agentCount: this.mission.agents.length,
+			wallTimeMs: finalResult.wallTimeMs,
+			totalTokens,
+			repairRounds: repairRound,
+			gatePassed,
+		});
+
+		return finalResult;
 	}
 
 	/** Get the current mission. */
