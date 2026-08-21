@@ -1,0 +1,37 @@
+{
+	"name": "@pi-chorus/cli",
+	"version": "0.1.0",
+	"description": "CLI for running, replaying, and viewing pi-chorus missions",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"pi-chorus": "./dist/cli.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": ["dist"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@pi-chorus/orchestrator": "^0.1.0",
+		"@pi-chorus/trace": "^0.1.0",
+		"@pi-chorus/tui": "^0.84.2"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"vitest": "4.1.9"
+	}
+}

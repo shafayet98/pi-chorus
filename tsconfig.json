@@ -1,0 +1,38 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"paths": {
+			"*": ["./*"],
+			"@pi-chorus/telemetry": ["./packages/telemetry/src/index.ts"],
+			"@pi-chorus/telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
+			"@pi-chorus/ai": ["./packages/ai/src/index.ts"],
+			"@pi-chorus/ai/oauth": ["./packages/ai/src/oauth.ts"],
+			"@pi-chorus/ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
+			"@pi-chorus/ai/dist/*": ["./packages/ai/src/*"],
+			"@pi-chorus/agent-core": ["./packages/agent/src/index.ts"],
+			"@pi-chorus/agent-core/node": ["./packages/agent/src/node.ts"],
+			"@pi-chorus/agent-core/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
+			],
+			"@pi-chorus/agent-core/*": ["./packages/agent/src/*"],
+			"@pi-chorus/session-backend-sqlite-node": ["./packages/session-backends/sqlite-node/src/index.ts"],
+			"@pi-chorus/tui": ["./packages/tui/src/index.ts"],
+			"@pi-chorus/tui/*": ["./packages/tui/src/*"],
+			"@pi-chorus/trace": ["./packages/trace/src/index.ts"],
+			"@pi-chorus/worktree": ["./packages/worktree/src/index.ts"],
+			"@pi-chorus/coordination": ["./packages/coordination/src/index.ts"],
+			"@pi-chorus/orchestrator": ["./packages/orchestrator/src/index.ts"],
+			"typebox": ["./node_modules/typebox"]
+		}
+	},
+	"include": [
+		"packages/*/src/**/*",
+		"packages/*/test/**/*",
+		"packages/session-backends/*/src/**/*",
+		"packages/session-backends/*/test/**/*"
+	],
+	"exclude": ["**/dist/**"]
+}
