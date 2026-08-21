@@ -40,7 +40,7 @@ export interface MissionConfig {
 	maxWallTime?: number;
 	/** Maximum total tokens across all agents */
 	maxTokens?: number;
-	/** Human-in-the-loop mode */
+	/** @deprecated Use Approver interface instead */
 	humanApproval?: boolean;
 	/** Model to use for task decomposition (default: "sonnet") */
 	decomposerModel?: string;

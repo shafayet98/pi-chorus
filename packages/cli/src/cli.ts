@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Orchestrator } from "@pi-chorus/orchestrator";
+import { Orchestrator, AutoApprover, InteractiveApprover } from "@pi-chorus/orchestrator";
 import type { MissionConfig } from "@pi-chorus/orchestrator";
 import { TraceStore, createInMemoryDatabase } from "@pi-chorus/trace";
 import { ViewerServer } from "@pi-chorus/viewer";
@@ -26,7 +26,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			catalog: { type: "string", default: "./roles" },
 			port: { type: "string", default: "3000" },
 			"max-agents": { type: "string" },
-			"human-approval": { type: "boolean", default: true },
+			auto: { type: "boolean", default: false },
 		},
 	});
 
@@ -46,7 +46,6 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 				repoPath: values.repo ?? ".",
 				catalogPath: values.catalog ?? "./roles",
 				maxAgents: values["max-agents"] ? parseInt(values["max-agents"], 10) : undefined,
-				humanApproval: values["human-approval"],
 			};
 
 			// TODO: Use real SQLite for trace store
@@ -54,7 +53,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			const traceDb = createInMemoryDatabase();
 			const traceStore = new TraceStore(traceDb, traceDir);
 
-			const orchestrator = new Orchestrator(config, traceStore);
+			const approver = values.auto ? new AutoApprover() : new InteractiveApprover();
+			const orchestrator = new Orchestrator(config, traceStore, approver);
 			const result = await orchestrator.run();
 
 			console.log(`Mission ${result.mission.id}: ${result.mission.status}`);
@@ -113,18 +113,39 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			break;
 		}
 
-		case "list":
-			console.log("TODO: List past missions from trace store");
+		case "list": {
+			const listDir = mkdtempSync(join(tmpdir(), "pi-chorus-list-"));
+			const listStore = new TraceStore(createInMemoryDatabase(), listDir);
+			const missions = listStore.listMissions();
+
+			if (missions.length === 0) {
+				console.log("No past missions found.");
+				console.log("(Note: mission persistence requires a real SQLite database, not yet implemented.)");
+			} else {
+				for (const m of missions) {
+					const duration = m.endedAt ? `${((m.endedAt - m.startedAt) / 1000).toFixed(1)}s` : "running";
+					console.log(`${m.id.slice(0, 8)}  ${m.status.padEnd(10)} ${duration.padEnd(8)} ${m.agentCount} agents  ${m.description.slice(0, 60)}`);
+				}
+			}
 			break;
+		}
 
 		default:
 			console.log("pi-chorus - Self-organizing multi-agent coding system");
 			console.log("");
 			console.log("Commands:");
-			console.log('  run <description> --gate <cmd>  Run a mission');
+			console.log("  run <description> --gate <cmd>  Run a mission");
 			console.log("  view [--port 3000]              Launch trace viewer");
 			console.log("  replay <mission-id>             Replay a mission trace");
 			console.log("  list                            List past missions");
+			console.log("");
+			console.log("Options:");
+			console.log("  --gate <cmd>       Verification gate (e.g., 'npm test && npm run build')");
+			console.log("  --repo <path>      Repository path (default: .)");
+			console.log("  --catalog <path>   Role catalog directory (default: ./roles)");
+			console.log("  --max-agents <n>   Maximum number of agents");
+			console.log("  --auto             Skip interactive approvals (fully autonomous)");
+			console.log("  --port <n>         Port for trace viewer (default: 3000)");
 			break;
 	}
 }
