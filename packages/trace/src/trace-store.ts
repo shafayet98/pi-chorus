@@ -170,3 +170,54 @@ export class TraceStore {
 		};
 	}
 }
+
+/**
+ * In-memory Database implementation for testing and lightweight usage.
+ * Implements the same query interface as SQLite but stores everything in arrays.
+ */
+export function createInMemoryDatabase(): Database {
+	const tables = new Map<string, any[]>();
+
+	return {
+		exec(sql: string): void {
+			const createMatch = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
+			if (createMatch && !tables.has(createMatch[1])) {
+				tables.set(createMatch[1], []);
+			}
+		},
+		prepare(sql: string): Statement {
+			return {
+				run(...params: any[]): void {
+					const insertMatch = sql.match(/INSERT INTO (\w+)/);
+					if (insertMatch) {
+						const table = tables.get(insertMatch[1]);
+						if (table) {
+							const colMatch = sql.match(/\(([^)]+)\)\s+VALUES/);
+							if (colMatch) {
+								const cols = colMatch[1].split(",").map((c) => c.trim());
+								const row: any = {};
+								cols.forEach((col, i) => {
+									row[col] = params[i];
+								});
+								table.push(row);
+							}
+						}
+					}
+				},
+				all(...params: any[]): any[] {
+					const selectMatch = sql.match(/FROM (\w+)/);
+					if (!selectMatch) return [];
+					const table = tables.get(selectMatch[1]) ?? [];
+					const whereMatch = sql.match(/WHERE (\w+) = \?/);
+					if (whereMatch && params.length > 0) {
+						return table.filter((row) => row[whereMatch[1]] === params[0]);
+					}
+					return table;
+				},
+				get(...params: any[]): any {
+					return this.all(...params)[0] ?? null;
+				},
+			};
+		},
+	};
+}

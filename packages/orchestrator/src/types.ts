@@ -42,6 +42,8 @@ export interface MissionConfig {
 	maxTokens?: number;
 	/** Human-in-the-loop mode */
 	humanApproval?: boolean;
+	/** Model to use for task decomposition (default: "sonnet") */
+	decomposerModel?: string;
 }
 
 export interface MissionResult {

@@ -1,6 +1,10 @@
 import { parseArgs } from "node:util";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Orchestrator } from "@pi-chorus/orchestrator";
 import type { MissionConfig } from "@pi-chorus/orchestrator";
+import { TraceStore, createInMemoryDatabase } from "@pi-chorus/trace";
 
 /**
  * CLI entry point for pi-chorus.
@@ -49,7 +53,12 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 				humanApproval: values["human-approval"],
 			};
 
-			const orchestrator = new Orchestrator(config);
+			// TODO: Use real SQLite for trace store
+			const traceDir = mkdtempSync(join(tmpdir(), "pi-chorus-trace-"));
+			const traceDb = createInMemoryDatabase();
+			const traceStore = new TraceStore(traceDb, traceDir);
+
+			const orchestrator = new Orchestrator(config, traceStore);
 			const result = await orchestrator.run();
 
 			console.log(`Mission ${result.mission.id}: ${result.mission.status}`);
