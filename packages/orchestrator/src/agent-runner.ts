@@ -9,8 +9,8 @@ import {
 	type AgentHarnessTool,
 } from "@pi-chorus/agent-core";
 import { streamSimple, getModel } from "@pi-chorus/ai/compat";
-import type { RoleDefinition, AgentMessage as CoordMessage } from "@pi-chorus/coordination";
-import type { LeaseManager, MessageBus, CapabilityRegistry } from "@pi-chorus/coordination";
+import type { RoleDefinition, AgentMessage as CoordMessage, DecisionRecord } from "@pi-chorus/coordination";
+import type { LeaseManager, MessageBus, CapabilityRegistry, RoomManager } from "@pi-chorus/coordination";
 import type { TraceStore } from "@pi-chorus/trace";
 import type { TSchema } from "typebox";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
@@ -67,6 +67,10 @@ export interface AgentRunnerOptions {
 	capabilityRegistry?: CapabilityRegistry;
 	/** Path to the shared scratch space */
 	scratchPath?: string;
+	/** Room manager for multi-party negotiation */
+	roomManager?: RoomManager;
+	/** Decision records to inject into the agent's briefing */
+	initialDecisions?: DecisionRecord[];
 	/** Callback when this agent requests a capability */
 	onCapabilityRequest?: (capability: string, reason: string) => void;
 }
@@ -164,8 +168,20 @@ export class AgentRunner {
 		});
 
 		try {
+			// Build the full prompt: mandate + any injected decision records
+			let fullPrompt = mandate;
+			if (this.options.initialDecisions && this.options.initialDecisions.length > 0) {
+				const decisionsText = this.options.initialDecisions
+					.map(
+						(d) =>
+							`[Decision ${d.id}] Q: ${d.question} → ${d.decision} (${d.rationale}). Participants: ${d.participants.join(", ")}`,
+					)
+					.join("\n");
+				fullPrompt += `\n\n--- Prior Decisions ---\nThe following decisions were made before you were spawned. Act on them:\n${decisionsText}`;
+			}
+
 			// Run the agent with the mandate as the user prompt
-			await this.agent.prompt(mandate);
+			await this.agent.prompt(fullPrompt);
 			await this.agent.waitForIdle();
 
 			traceStore.emit(agentId, "lifecycle.stop", { status: "done" }, [...lastCauses], missionId);
@@ -530,6 +546,290 @@ export class AgentRunner {
 			},
 		};
 
+		// --- Room tools ---
+
+		const { roomManager, initialDecisions } = this.options;
+
+		const openRoomTool: AgentTool = {
+			name: "open_room",
+			label: "open_room",
+			description:
+				"Open an ephemeral negotiation room with other agents. Use this when you need to reach a " +
+				"multi-party decision (e.g., agreeing on an API contract). The room has a turn budget — " +
+				"if it expires without resolution, the orchestrator will arbitrate.",
+			parameters: {
+				type: "object",
+				properties: {
+					topic: { type: "string", description: "Short topic name" },
+					question: { type: "string", description: "The specific question to resolve" },
+					invite: {
+						type: "array",
+						items: { type: "string" },
+						description: "Agent IDs to invite (e.g., [\"backend#1\"])",
+					},
+					turn_budget: {
+						type: "number",
+						description: "Max turns before orchestrator arbitrates (default: 10)",
+					},
+				},
+				required: ["topic", "question", "invite"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { topic, question, invite, turn_budget } = params as {
+					topic: string;
+					question: string;
+					invite: string[];
+					turn_budget?: number;
+				};
+				if (!roomManager) {
+					return {
+						content: [{ type: "text" as const, text: "Room negotiation is not available." }],
+						details: { error: "no_room_manager" },
+					};
+				}
+
+				const room = roomManager.open(agentId, topic, question, invite, turn_budget ?? 10);
+				traceStore.emit(agentId, "room.open", {
+					roomId: room.id,
+					topic,
+					question,
+					members: room.members,
+					turnBudget: room.turnBudget,
+				}, [], missionId);
+
+				// Notify invited agents
+				if (messageBus) {
+					for (const invitee of invite) {
+						messageBus.send(agentId, invitee, "INFO", {
+							content: `You've been invited to room "${topic}" (${room.id}). Question: ${question}. Use send_to_room to participate.`,
+						}, traceStore.clockFor(agentId).tick());
+					}
+				}
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Opened room "${topic}" (${room.id}) with ${invite.join(", ")}. Question: ${question}. Budget: ${room.turnBudget} turns.`,
+						},
+					],
+					details: { roomId: room.id, topic, members: room.members },
+				};
+			},
+		};
+
+		const sendToRoomTool: AgentTool = {
+			name: "send_to_room",
+			label: "send_to_room",
+			description:
+				"Send a message to a negotiation room. Use message types: PROPOSE (propose a solution), " +
+				"ACCEPT (accept a proposal), REJECT (reject with reason). " +
+				"When all participants accept, the room resolves with a decision record.",
+			parameters: {
+				type: "object",
+				properties: {
+					room_id: { type: "string", description: "The room ID" },
+					type: {
+						type: "string",
+						enum: ["PROPOSE", "ACCEPT", "REJECT", "INFO"],
+						description: "Message type",
+					},
+					content: { type: "string", description: "Message content" },
+				},
+				required: ["room_id", "type", "content"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { room_id, type, content: msgContent } = params as {
+					room_id: string;
+					type: any;
+					content: string;
+				};
+				if (!roomManager) {
+					return {
+						content: [{ type: "text" as const, text: "Room negotiation is not available." }],
+						details: { error: "no_room_manager" },
+					};
+				}
+
+				const room = roomManager.getRoom(room_id);
+				if (!room) {
+					return {
+						content: [{ type: "text" as const, text: `Room ${room_id} not found.` }],
+						details: { error: "not_found" },
+					};
+				}
+
+				if (room.status !== "open") {
+					const decision = room.decision;
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Room is ${room.status}. ${decision ? `Decision: ${decision.decision}` : ""}`,
+							},
+						],
+						details: { status: room.status, decision },
+					};
+				}
+
+				// Record the turn
+				const withinBudget = roomManager.recordTurn(room_id);
+
+				// Broadcast to room members via message bus
+				if (messageBus) {
+					for (const member of room.members) {
+						if (member !== agentId) {
+							messageBus.send(agentId, member, type, {
+								content: msgContent,
+								roomId: room_id,
+							}, traceStore.clockFor(agentId).tick(), room_id);
+						}
+					}
+				}
+
+				if (!withinBudget) {
+					traceStore.emit(agentId, "room.resolve", {
+						roomId: room_id,
+						reason: "turn_budget_exhausted",
+					}, [], missionId);
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Room "${room.topic}" hit its turn budget (${room.turnBudget}). The orchestrator will arbitrate.`,
+							},
+						],
+						details: { roomId: room_id, expired: true },
+					};
+				}
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `[${type}] sent to room "${room.topic}" (turn ${room.turnsUsed}/${room.turnBudget}).`,
+						},
+					],
+					details: { roomId: room_id, type, turnsUsed: room.turnsUsed },
+				};
+			},
+		};
+
+		const resolveRoomTool: AgentTool = {
+			name: "resolve_room",
+			label: "resolve_room",
+			description:
+				"Resolve a room with a decision. Only the room asker should call this after participants have agreed. " +
+				"This creates a durable decision record that other agents can read.",
+			parameters: {
+				type: "object",
+				properties: {
+					room_id: { type: "string", description: "The room ID" },
+					decision: { type: "string", description: "The agreed-upon decision" },
+					rationale: { type: "string", description: "Why this decision was made" },
+				},
+				required: ["room_id", "decision", "rationale"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { room_id, decision, rationale } = params as {
+					room_id: string;
+					decision: string;
+					rationale: string;
+				};
+				if (!roomManager) {
+					return {
+						content: [{ type: "text" as const, text: "Room negotiation is not available." }],
+						details: { error: "no_room_manager" },
+					};
+				}
+
+				const record = roomManager.resolve(room_id, decision, rationale);
+				traceStore.emit(agentId, "room.resolve", {
+					roomId: room_id,
+					decisionId: record.id,
+					decision,
+				}, [], missionId);
+				traceStore.emit(agentId, "decision.record", {
+					decisionId: record.id,
+					question: record.question,
+					decision: record.decision,
+					participants: record.participants,
+				}, [], missionId);
+
+				// Notify all room members
+				if (messageBus) {
+					const room = roomManager.getRoom(room_id);
+					if (room) {
+						for (const member of room.members) {
+							if (member !== agentId) {
+								messageBus.send(agentId, member, "INFO", {
+									content: `Room "${room.topic}" resolved. Decision: ${decision}. Use read_decision("${record.id}") for details.`,
+								}, traceStore.clockFor(agentId).tick());
+							}
+						}
+					}
+				}
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Room resolved. Decision record ${record.id} created: ${decision}`,
+						},
+					],
+					details: { decisionId: record.id, decision, rationale },
+				};
+			},
+		};
+
+		const readDecisionTool: AgentTool = {
+			name: "read_decision",
+			label: "read_decision",
+			description:
+				"Read a decision record by ID. Decision records are the structured output of negotiation rooms. " +
+				"They contain the question, decision, rationale, and participants.",
+			parameters: {
+				type: "object",
+				properties: {
+					decision_id: { type: "string", description: "The decision record ID" },
+				},
+				required: ["decision_id"],
+			} as unknown as TSchema,
+			execute: async (_toolCallId, params) => {
+				const { decision_id } = params as { decision_id: string };
+				if (!roomManager) {
+					return {
+						content: [{ type: "text" as const, text: "Room negotiation is not available." }],
+						details: { error: "no_room_manager" },
+					};
+				}
+
+				const record = roomManager.getDecision(decision_id);
+				if (!record) {
+					return {
+						content: [{ type: "text" as const, text: `Decision ${decision_id} not found.` }],
+						details: { error: "not_found" },
+					};
+				}
+
+				const formatted = [
+					`Question: ${record.question}`,
+					`Decision: ${record.decision}`,
+					`Rationale: ${record.rationale}`,
+					`Participants: ${record.participants.join(", ")}`,
+					record.dissents.length > 0 ? `Dissents: ${record.dissents.join(", ")}` : null,
+				]
+					.filter(Boolean)
+					.join("\n");
+
+				return {
+					content: [{ type: "text" as const, text: formatted }],
+					details: record,
+				};
+			},
+		};
+
 		// Build the tool set based on the role's tool list
 		const toolRegistry = new Map<string, AgentTool>([
 			["read", readTool],
@@ -546,6 +846,11 @@ export class AgentRunner {
 
 		// Always include coordination tools
 		enabledTools.push(claimTool, releaseTool, doneTool, sendTool, readMessagesTool, requestCapabilityTool);
+
+		// Include room tools if room manager is configured
+		if (roomManager) {
+			enabledTools.push(openRoomTool, sendToRoomTool, resolveRoomTool, readDecisionTool);
+		}
 
 		// Include scratch tools if scratch space is configured
 		if (scratchPath) {
@@ -603,6 +908,15 @@ export class AgentRunner {
 			"- request_capability(capability, reason): Request a specialist agent",
 			"- signal_done(): Signal that your work is complete",
 		];
+
+		if (this.options.roomManager) {
+			sections.push(
+				"- open_room(topic, question, invite): Open a negotiation room with other agents",
+				"- send_to_room(room_id, type, content): Send PROPOSE/ACCEPT/REJECT to a room",
+				"- resolve_room(room_id, decision, rationale): Resolve a room with a decision",
+				"- read_decision(decision_id): Read a decision record from a resolved room",
+			);
+		}
 
 		if (this.options.scratchPath) {
 			sections.push(
