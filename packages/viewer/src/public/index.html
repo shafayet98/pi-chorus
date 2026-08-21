@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-chorus trace viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; background: #0d1117; color: #c9d1d9; font-size: 13px; }
+header { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
+header input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; width: 320px; }
+header button { background: #238636; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 13px; }
+header button:hover { background: #2ea043; }
+.tabs { display: flex; gap: 0; background: #161b22; border-bottom: 1px solid #30363d; padding: 0 20px; }
+.tab { padding: 10px 16px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; }
+.tab:hover { color: #c9d1d9; }
+.tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+main { padding: 20px; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* Swimlanes */
+.swimlane { margin-bottom: 20px; }
+.swimlane-header { font-weight: 600; color: #58a6ff; margin-bottom: 8px; font-size: 14px; }
+.event-row { display: flex; gap: 12px; padding: 4px 8px; border-radius: 4px; align-items: baseline; }
+.event-row:hover { background: #161b22; }
+.event-clock { color: #8b949e; min-width: 40px; text-align: right; }
+.event-kind { min-width: 160px; }
+.event-kind.lifecycle { color: #a5d6ff; }
+.event-kind.llm { color: #d2a8ff; }
+.event-kind.tool { color: #7ee787; }
+.event-kind.message { color: #ffa657; }
+.event-kind.lease { color: #f778ba; }
+.event-kind.room { color: #79c0ff; }
+.event-kind.gate { color: #ffd700; }
+.event-kind.git { color: #ff7b72; }
+.event-kind.agent { color: #d2a8ff; }
+.event-kind.capability { color: #f0883e; }
+.event-kind.decision { color: #56d364; }
+.event-kind.wait { color: #8b949e; }
+.event-kind.file { color: #7ee787; }
+.event-payload { color: #8b949e; max-width: 600px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.event-payload:hover { color: #c9d1d9; white-space: normal; }
+
+/* Roster */
+.roster-entry { display: flex; gap: 16px; padding: 8px 12px; border-left: 3px solid #30363d; margin-bottom: 8px; }
+.roster-entry:nth-child(odd) { border-left-color: #58a6ff; }
+.roster-entry:nth-child(even) { border-left-color: #7ee787; }
+.roster-agent { font-weight: 600; color: #58a6ff; min-width: 140px; }
+.roster-role { color: #8b949e; min-width: 100px; }
+.roster-mandate { color: #c9d1d9; }
+
+/* Causal chain */
+.chain-event { padding: 6px 12px; border-left: 2px solid #30363d; margin-left: 12px; margin-bottom: 4px; }
+.chain-event:first-child { border-left-color: #ff7b72; }
+
+/* Event detail modal */
+.modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; }
+.modal.active { display: flex; align-items: center; justify-content: center; }
+.modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; max-width: 700px; width: 90%; max-height: 80vh; overflow: auto; }
+.modal-content h3 { color: #58a6ff; margin-bottom: 12px; }
+.modal-content pre { background: #0d1117; padding: 12px; border-radius: 4px; overflow-x: auto; color: #c9d1d9; }
+.modal-close { float: right; cursor: pointer; color: #8b949e; font-size: 18px; }
+.modal-close:hover { color: #fff; }
+
+.empty { color: #8b949e; padding: 40px; text-align: center; }
+.status { color: #8b949e; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<header>
+	<h1>pi-chorus</h1>
+	<input type="text" id="missionInput" placeholder="Enter mission ID...">
+	<button onclick="loadMission()">Load</button>
+	<span id="statusText" class="status"></span>
+</header>
+
+<div class="tabs">
+	<div class="tab active" onclick="switchTab('swimlanes')">Swimlanes</div>
+	<div class="tab" onclick="switchTab('roster')">Roster</div>
+	<div class="tab" onclick="switchTab('events')">All Events</div>
+	<div class="tab" onclick="switchTab('replay')">Replay</div>
+</div>
+
+<main>
+	<div id="swimlanes" class="panel active">
+		<div class="empty">Enter a mission ID to view its trace.</div>
+	</div>
+	<div id="roster" class="panel">
+		<div class="empty">Enter a mission ID to view the roster timeline.</div>
+	</div>
+	<div id="events" class="panel">
+		<div class="empty">Enter a mission ID to view all events.</div>
+	</div>
+	<div id="replay" class="panel">
+		<div class="empty">Enter a mission ID to view the replay with resolved payloads.</div>
+	</div>
+</main>
+
+<div id="modal" class="modal" onclick="if(event.target===this)closeModal()">
+	<div class="modal-content">
+		<span class="modal-close" onclick="closeModal()">x</span>
+		<h3 id="modalTitle"></h3>
+		<pre id="modalBody"></pre>
+	</div>
+</div>
+
+<script>
+let currentMissionId = null;
+
+function switchTab(name) {
+	document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+	document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+	document.querySelector(`.tab[onclick*="${name}"]`).classList.add('active');
+	document.getElementById(name).classList.add('active');
+}
+
+async function loadMission() {
+	const input = document.getElementById('missionInput');
+	currentMissionId = input.value.trim();
+	if (!currentMissionId) return;
+
+	document.getElementById('statusText').textContent = 'Loading...';
+
+	await Promise.all([
+		loadSwimlanes(currentMissionId),
+		loadRoster(currentMissionId),
+		loadEvents(currentMissionId),
+		loadReplay(currentMissionId),
+	]);
+
+	document.getElementById('statusText').textContent = 'Loaded';
+}
+
+async function loadSwimlanes(missionId) {
+	const res = await fetch(`/api/swimlanes/${missionId}`);
+	const data = await res.json();
+	const container = document.getElementById('swimlanes');
+
+	if (!data.swimlanes || data.swimlanes.length === 0) {
+		container.innerHTML = '<div class="empty">No events found for this mission.</div>';
+		return;
+	}
+
+	container.innerHTML = data.swimlanes.map(lane => `
+		<div class="swimlane">
+			<div class="swimlane-header">${lane.agentId}</div>
+			${lane.events.map(e => renderEvent(e)).join('')}
+		</div>
+	`).join('');
+}
+
+async function loadRoster(missionId) {
+	const res = await fetch(`/api/roster/${missionId}`);
+	const data = await res.json();
+	const container = document.getElementById('roster');
+
+	if (!data.roster || data.roster.length === 0) {
+		container.innerHTML = '<div class="empty">No agents spawned in this mission.</div>';
+		return;
+	}
+
+	container.innerHTML = data.roster.map(r => `
+		<div class="roster-entry">
+			<span class="roster-agent">${r.agentId}</span>
+			<span class="roster-role">${r.roleName}</span>
+			<span class="roster-mandate">${r.mandate || '(no mandate)'}</span>
+		</div>
+	`).join('');
+}
+
+async function loadEvents(missionId) {
+	const res = await fetch(`/api/events/${missionId}`);
+	const data = await res.json();
+	const container = document.getElementById('events');
+
+	if (!data.events || data.events.length === 0) {
+		container.innerHTML = '<div class="empty">No events found.</div>';
+		return;
+	}
+
+	container.innerHTML = data.events.map(e => renderEvent(e)).join('');
+}
+
+async function loadReplay(missionId) {
+	const res = await fetch(`/api/replay/${missionId}`);
+	const data = await res.json();
+	const container = document.getElementById('replay');
+
+	if (!data.events || data.events.length === 0) {
+		container.innerHTML = '<div class="empty">No events found.</div>';
+		return;
+	}
+
+	container.innerHTML = data.events.map(e => `
+		<div class="event-row" onclick="showDetail('${e.id}', ${JSON.stringify(JSON.stringify(e.payload))})">
+			<span class="event-clock">${e.clock}</span>
+			<span class="event-kind ${kindClass(e.kind)}">${e.kind}</span>
+			<span style="color:#8b949e;min-width:120px">${e.agentId}</span>
+			<span class="event-payload">${summarizePayload(e.payload)}</span>
+		</div>
+	`).join('');
+}
+
+function renderEvent(e) {
+	return `<div class="event-row" onclick="loadPayload('${e.id}', '${e.payloadHash}', '${e.kind}')">
+		<span class="event-clock">${e.clock}</span>
+		<span class="event-kind ${kindClass(e.kind)}">${e.kind}</span>
+		<span style="color:#8b949e;min-width:120px">${e.agentId}</span>
+		<span class="event-payload">${e.payloadHash.slice(0, 12)}...</span>
+	</div>`;
+}
+
+function kindClass(kind) {
+	const prefix = kind.split('.')[0];
+	return prefix;
+}
+
+function summarizePayload(payload) {
+	if (!payload) return '(empty)';
+	const str = JSON.stringify(payload);
+	return str.length > 100 ? str.slice(0, 100) + '...' : str;
+}
+
+async function loadPayload(eventId, hash, kind) {
+	const res = await fetch(`/api/payload/${hash}`);
+	const data = await res.json();
+	showDetail(`${kind} (${eventId.slice(0, 8)})`, JSON.stringify(data.payload, null, 2));
+}
+
+function showDetail(title, body) {
+	document.getElementById('modalTitle').textContent = title;
+	document.getElementById('modalBody').textContent = body;
+	document.getElementById('modal').classList.add('active');
+}
+
+function closeModal() {
+	document.getElementById('modal').classList.remove('active');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.getElementById('missionInput').addEventListener('keydown', e => { if (e.key === 'Enter') loadMission(); });
+</script>
+
+</body>
+</html>

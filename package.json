@@ -8,7 +8,7 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces --if-present",
-		"build": "cd packages/tui && npm run build && cd ../telemetry && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../session-backends/sqlite-node && npm run build && cd ../../trace && npm run build && cd ../coordination && npm run build && cd ../worktree && npm run build && cd ../orchestrator && npm run build && cd ../cli && npm run build",
+		"build": "cd packages/tui && npm run build && cd ../telemetry && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../session-backends/sqlite-node && npm run build && cd ../../trace && npm run build && cd ../coordination && npm run build && cd ../worktree && npm run build && cd ../orchestrator && npm run build && cd ../viewer && npm run build && cd ../cli && npm run build",
 		"check": "biome check --write --error-on-warnings . && tsgo --noEmit",
 		"test": "npm run test --workspaces --if-present"
 	},
