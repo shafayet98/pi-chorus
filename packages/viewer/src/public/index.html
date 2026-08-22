@@ -19,7 +19,6 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 
 .layout { display: flex; height: calc(100vh - 49px); }
 
-/* Sidebar: Agent roster */
 .sidebar { width: 240px; border-right: 1px solid #30363d; overflow-y: auto; background: #0d1117; }
 .sidebar h2 { padding: 12px 16px 8px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
 .agent-card { padding: 8px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
@@ -33,21 +32,20 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 .agent-status.failed { color: #f85149; }
 .agent-status.spawning { color: #d29922; }
 
-/* Main content */
 .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
 .tabs { display: flex; gap: 0; background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; }
-.tab { padding: 10px 16px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; font-size: 13px; }
+.tab { padding: 10px 16px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; font-size: 13px; position: relative; }
 .tab:hover { color: #c9d1d9; }
 .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.tab-badge { background: #da3633; color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-left: 6px; }
 
 .panel-container { flex: 1; overflow-y: auto; padding: 16px; }
 .panel { display: none; }
 .panel.active { display: block; }
 
-/* Live feed */
 .feed-event { display: flex; gap: 10px; padding: 5px 8px; border-radius: 4px; align-items: baseline; animation: fadeIn 0.3s ease; }
-.feed-event:hover { background: #161b22; }
+.feed-event:hover { background: #161b22; cursor: pointer; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .feed-time { color: #484f58; min-width: 65px; font-size: 11px; }
 .feed-agent { min-width: 130px; font-weight: 600; font-size: 12px; }
@@ -55,43 +53,54 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 .feed-detail { color: #8b949e; font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed-detail:hover { white-space: normal; }
 
-/* Kind colors */
-.k-lifecycle { color: #a5d6ff; }
-.k-llm { color: #d2a8ff; }
-.k-tool { color: #7ee787; }
-.k-message { color: #ffa657; }
-.k-lease { color: #f778ba; }
-.k-room { color: #79c0ff; }
-.k-gate { color: #ffd700; }
-.k-git { color: #ff7b72; }
-.k-agent { color: #d2a8ff; }
-.k-capability { color: #f0883e; }
-.k-decision { color: #56d364; }
-.k-wait { color: #8b949e; }
+.k-lifecycle { color: #a5d6ff; } .k-llm { color: #d2a8ff; } .k-tool { color: #7ee787; }
+.k-message { color: #ffa657; } .k-lease { color: #f778ba; } .k-room { color: #79c0ff; }
+.k-gate { color: #ffd700; } .k-git { color: #ff7b72; } .k-agent { color: #d2a8ff; }
+.k-capability { color: #f0883e; } .k-decision { color: #56d364; } .k-wait { color: #8b949e; }
 .k-file { color: #7ee787; }
 
-/* Agent colors for sidebar/feed */
-.ac-0 { color: #58a6ff; }
-.ac-1 { color: #3fb950; }
-.ac-2 { color: #d2a8ff; }
-.ac-3 { color: #ffa657; }
-.ac-4 { color: #f778ba; }
-.ac-5 { color: #79c0ff; }
-.ac-6 { color: #ffd700; }
-.ac-7 { color: #ff7b72; }
+.ac-0 { color: #58a6ff; } .ac-1 { color: #3fb950; } .ac-2 { color: #d2a8ff; }
+.ac-3 { color: #ffa657; } .ac-4 { color: #f778ba; } .ac-5 { color: #79c0ff; }
+.ac-6 { color: #ffd700; } .ac-7 { color: #ff7b72; }
 
-/* Stats bar */
 .stats { display: flex; gap: 24px; padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; }
 .stat-value { color: #c9d1d9; font-weight: 600; }
 
-/* Swimlanes */
+/* Rooms */
+.room-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.room-header { padding: 12px 16px; border-bottom: 1px solid #21262d; display: flex; justify-content: space-between; align-items: center; }
+.room-topic { font-weight: 600; color: #79c0ff; font-size: 14px; }
+.room-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.room-status.open { background: #1a4021; color: #3fb950; }
+.room-status.resolved { background: #1a3a4a; color: #58a6ff; }
+.room-status.expired { background: #4a2a1a; color: #f0883e; }
+.room-question { padding: 8px 16px; color: #c9d1d9; font-size: 13px; background: #0d1117; border-bottom: 1px solid #21262d; }
+.room-members { padding: 6px 16px; font-size: 11px; color: #8b949e; border-bottom: 1px solid #21262d; }
+.room-messages { max-height: 300px; overflow-y: auto; }
+.room-msg { padding: 8px 16px; border-bottom: 1px solid #21262d; }
+.room-msg:last-child { border-bottom: none; }
+.room-msg-header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.room-msg-sender { font-weight: 600; font-size: 12px; }
+.room-msg-type { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+.room-msg-type.PROPOSE { background: #1a3a4a; color: #58a6ff; }
+.room-msg-type.ACCEPT { background: #1a4021; color: #3fb950; }
+.room-msg-type.REJECT { background: #4a1a1a; color: #f85149; }
+.room-msg-type.INFO { background: #2a2a1a; color: #d29922; }
+.room-msg-content { color: #c9d1d9; font-size: 12px; white-space: pre-wrap; }
+.room-decision { padding: 12px 16px; background: #0d2818; border-top: 2px solid #238636; }
+.room-decision-label { font-size: 11px; color: #3fb950; text-transform: uppercase; margin-bottom: 4px; }
+.room-decision-text { color: #c9d1d9; font-size: 13px; }
+
+/* DMs */
+.dm-msg { display: flex; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #21262d; align-items: baseline; animation: fadeIn 0.3s ease; }
+.dm-arrow { color: #484f58; }
+
 .swimlane { margin-bottom: 20px; }
 .swimlane-header { font-weight: 600; margin-bottom: 8px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .swimlane-count { color: #8b949e; font-size: 12px; font-weight: normal; }
 
 .empty { color: #484f58; padding: 40px; text-align: center; font-size: 14px; }
 
-/* Modal */
 .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; }
 .modal.active { display: flex; align-items: center; justify-content: center; }
 .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; max-width: 700px; width: 90%; max-height: 80vh; overflow: auto; }
@@ -124,12 +133,16 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 		<div class="stats">
 			<span>Events: <span id="statEvents" class="stat-value">0</span></span>
 			<span>Agents: <span id="statAgents" class="stat-value">0</span></span>
+			<span>Rooms: <span id="statRooms" class="stat-value">0</span></span>
+			<span>Messages: <span id="statMessages" class="stat-value">0</span></span>
 			<span>Elapsed: <span id="statTime" class="stat-value">0s</span></span>
 			<span>Status: <span id="statStatus" class="stat-value">waiting</span></span>
 		</div>
 
 		<div class="tabs">
 			<div class="tab active" onclick="switchTab('live')">Live Feed</div>
+			<div class="tab" onclick="switchTab('rooms')">Rooms<span id="roomsBadge"></span></div>
+			<div class="tab" onclick="switchTab('messages')">Messages<span id="msgBadge"></span></div>
 			<div class="tab" onclick="switchTab('swimlanes')">Swimlanes</div>
 			<div class="tab" onclick="switchTab('roster')">Roster</div>
 		</div>
@@ -137,6 +150,12 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 		<div class="panel-container">
 			<div id="live" class="panel active">
 				<div id="liveFeed" class="empty">Waiting for events...</div>
+			</div>
+			<div id="rooms" class="panel">
+				<div id="roomsContent" class="empty">No rooms opened yet. Agents use rooms to negotiate decisions (API contracts, schemas, etc.)</div>
+			</div>
+			<div id="messages" class="panel">
+				<div id="messagesContent" class="empty">No direct messages yet. Agents use DMs to coordinate work.</div>
 			</div>
 			<div id="swimlanes" class="panel">
 				<div id="swimContent" class="empty">Waiting for events...</div>
@@ -157,9 +176,10 @@ header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
 </div>
 
 <script>
-// State
 const events = [];
-const agents = new Map(); // agentId -> { roleName, status, mandate, color, events[] }
+const agents = new Map();
+const rooms = new Map();   // roomId -> { topic, question, members, status, messages[], decision }
+const directMessages = []; // { from, to, type, content, timestamp }
 const agentColors = {};
 let colorIdx = 0;
 let missionId = null;
@@ -168,29 +188,22 @@ let selectedAgent = null;
 let feedStarted = false;
 
 function getAgentColor(agentId) {
-	if (!agentColors[agentId]) {
-		agentColors[agentId] = colorIdx++ % 8;
-	}
+	if (!agentColors[agentId]) agentColors[agentId] = colorIdx++ % 8;
 	return agentColors[agentId];
 }
 
-// SSE connection
 function connect() {
 	const source = new EventSource('/api/stream');
-
 	source.onopen = () => {
 		document.getElementById('connDot').className = 'dot connected';
 		document.getElementById('connText').textContent = 'live';
 	};
-
 	source.onerror = () => {
 		document.getElementById('connDot').className = 'dot disconnected';
 		document.getElementById('connText').textContent = 'reconnecting...';
 	};
-
 	source.onmessage = (e) => {
 		const data = JSON.parse(e.data);
-
 		if (data.type === 'mission') {
 			missionId = data.missionId;
 			missionStart = Date.now();
@@ -198,29 +211,21 @@ function connect() {
 			document.getElementById('statStatus').textContent = 'running';
 			return;
 		}
-
-		if (data.type === 'event') {
-			handleEvent(data.event);
-		}
+		if (data.type === 'event') handleEvent(data.event);
 	};
 }
 
 function handleEvent(event) {
 	events.push(event);
+	const p = event.payload || {};
 
 	// Track agents
-	if (event.kind === 'agent.spawn' && event.payload) {
-		const p = event.payload;
-		agents.set(p.agentId || event.agentId, {
-			roleName: p.roleName || 'unknown',
-			status: 'spawning',
-			mandate: p.mandate || '',
-			color: getAgentColor(p.agentId || event.agentId),
-			events: [],
+	if (event.kind === 'agent.spawn' && p.agentId) {
+		agents.set(p.agentId, {
+			roleName: p.roleName || 'unknown', status: 'spawning',
+			mandate: p.mandate || '', color: getAgentColor(p.agentId), events: [],
 		});
 	}
-
-	// Update agent status
 	const agent = agents.get(event.agentId);
 	if (agent) {
 		agent.events.push(event);
@@ -228,20 +233,40 @@ function handleEvent(event) {
 		if (event.kind === 'lifecycle.stop') agent.status = 'done';
 		if (event.kind === 'lifecycle.crash') agent.status = 'failed';
 	}
-
-	// Track orchestrator events
 	if (event.agentId === 'orchestrator' && !agents.has('orchestrator')) {
-		agents.set('orchestrator', {
-			roleName: 'orchestrator',
-			status: 'active',
-			mandate: 'Mission control',
-			color: getAgentColor('orchestrator'),
-			events: [],
-		});
+		agents.set('orchestrator', { roleName: 'orchestrator', status: 'active', mandate: 'Mission control', color: getAgentColor('orchestrator'), events: [] });
 	}
 	if (event.agentId === 'orchestrator') {
 		const orch = agents.get('orchestrator');
 		if (orch) orch.events.push(event);
+	}
+
+	// Track rooms
+	if (event.kind === 'room.open') {
+		rooms.set(p.roomId, {
+			topic: p.topic || '?', question: p.question || '',
+			members: p.members || [], status: 'open',
+			messages: [], decision: null, turnBudget: p.turnBudget || 10,
+		});
+	}
+	if (event.kind === 'room.resolve' && p.roomId) {
+		const room = rooms.get(p.roomId);
+		if (room) room.status = p.arbitrated ? 'expired' : 'resolved';
+	}
+	if (event.kind === 'decision.record' && p.roomId) {
+		const room = rooms.get(p.roomId);
+		if (room) room.decision = { decision: p.decision, question: p.question, decisionId: p.decisionId };
+	}
+
+	// Track messages (DMs and room messages)
+	if (event.kind === 'message.send') {
+		const msg = { from: event.agentId, to: p.to, type: p.messageType || 'INFO', content: p.content || '', timestamp: event.timestamp, roomId: p.roomId };
+		directMessages.push(msg);
+
+		// If it's a room message, add to the room
+		if (p.roomId && rooms.has(p.roomId)) {
+			rooms.get(p.roomId).messages.push(msg);
+		}
 	}
 
 	// Mission status
@@ -254,10 +279,11 @@ function handleEvent(event) {
 		document.getElementById('statStatus').style.color = '#f85149';
 	}
 
-	// Update UI
 	updateStats();
 	updateAgentList();
 	addToFeed(event);
+	updateRooms();
+	updateMessages();
 	updateSwimlanes();
 	updateRoster();
 }
@@ -265,11 +291,12 @@ function handleEvent(event) {
 function updateStats() {
 	document.getElementById('statEvents').textContent = events.length;
 	document.getElementById('statAgents').textContent = agents.size;
+	document.getElementById('statRooms').textContent = rooms.size;
+	document.getElementById('statMessages').textContent = directMessages.length;
 	const elapsed = ((Date.now() - missionStart) / 1000).toFixed(0);
 	document.getElementById('statTime').textContent = elapsed + 's';
 }
 
-// Update stats timer
 setInterval(() => {
 	if (events.length > 0) {
 		const elapsed = ((Date.now() - missionStart) / 1000).toFixed(0);
@@ -280,12 +307,11 @@ setInterval(() => {
 function updateAgentList() {
 	const container = document.getElementById('agentList');
 	if (agents.size === 0) return;
-
 	container.innerHTML = Array.from(agents.entries()).map(([id, a]) => `
 		<div class="agent-card ${selectedAgent === id ? 'selected' : ''}" onclick="selectAgent('${id}')">
 			<div class="agent-name ac-${a.color}">${id}</div>
 			<div class="agent-role">${a.roleName}</div>
-			<div class="agent-status ${a.status}">${a.status} (${a.events.length} events)</div>
+			<div class="agent-status ${a.status}">${a.status} (${a.events.length})</div>
 		</div>
 	`).join('');
 }
@@ -298,10 +324,7 @@ function selectAgent(agentId) {
 
 function addToFeed(event) {
 	const container = document.getElementById('liveFeed');
-	if (!feedStarted) {
-		container.innerHTML = '';
-		feedStarted = true;
-	}
+	if (!feedStarted) { container.innerHTML = ''; feedStarted = true; }
 
 	const colorClass = `ac-${getAgentColor(event.agentId)}`;
 	const kindClass = `k-${event.kind.split('.')[0]}`;
@@ -317,63 +340,116 @@ function addToFeed(event) {
 		<span class="feed-kind ${kindClass}">${event.kind}</span>
 		<span class="feed-detail">${detail}</span>
 	`;
-
 	container.appendChild(div);
 
-	// Auto-scroll to bottom
 	const panel = container.closest('.panel-container');
 	if (panel) panel.scrollTop = panel.scrollHeight;
 }
 
-function summarize(payload) {
-	if (!payload) return '';
-	if (typeof payload === 'string') return payload;
-
-	// Smart summaries for known event types
-	if (payload.toolName) return `tool: ${payload.toolName}`;
-	if (payload.agentId && payload.roleName) return `${payload.agentId} (${payload.roleName})`;
-	if (payload.mandate) return payload.mandate.slice(0, 80);
-	if (payload.path) return payload.path;
-	if (payload.paths) return payload.paths.join(', ');
-	if (payload.to) return `to: ${payload.to}`;
-	if (payload.capability) return payload.capability;
-	if (payload.decision) return payload.decision.slice(0, 80);
-	if (payload.error) return payload.error.slice(0, 80);
-	if (payload.reason) return payload.reason;
-	if (payload.status) return payload.status;
-	if (payload.durationMs) return `${payload.durationMs}ms`;
-
-	const str = JSON.stringify(payload);
+function summarize(p) {
+	if (!p) return '';
+	if (typeof p === 'string') return p;
+	if (p.toolName) return `tool: ${p.toolName}`;
+	if (p.agentId && p.roleName) return `${p.agentId} (${p.roleName})`;
+	if (p.mandate) return p.mandate.slice(0, 80);
+	if (p.topic && p.question) return `"${p.topic}" — ${p.question.slice(0, 60)}`;
+	if (p.path) return p.path;
+	if (p.paths) return p.paths.join(', ');
+	if (p.to && p.messageType) return `${p.messageType} to ${p.to}`;
+	if (p.to) return `to: ${p.to}`;
+	if (p.capability) return p.capability;
+	if (p.decision) return p.decision.slice(0, 80);
+	if (p.error) return p.error.slice(0, 80);
+	if (p.reason) return p.reason;
+	if (p.status) return p.status;
+	if (p.durationMs) return `${p.durationMs}ms`;
+	const str = JSON.stringify(p);
 	return str.length > 100 ? str.slice(0, 100) + '...' : str;
+}
+
+function updateRooms() {
+	const container = document.getElementById('roomsContent');
+	if (rooms.size === 0) return;
+
+	// Update badge
+	const openCount = Array.from(rooms.values()).filter(r => r.status === 'open').length;
+	document.getElementById('roomsBadge').innerHTML = openCount > 0 ? `<span class="tab-badge">${openCount}</span>` : '';
+
+	container.innerHTML = Array.from(rooms.entries()).map(([id, room]) => `
+		<div class="room-card">
+			<div class="room-header">
+				<span class="room-topic">${room.topic}</span>
+				<span class="room-status ${room.status}">${room.status}</span>
+			</div>
+			<div class="room-question">${room.question}</div>
+			<div class="room-members">Members: ${room.members.map(m => `<span class="ac-${getAgentColor(m)}">${m}</span>`).join(', ')}</div>
+			<div class="room-messages">
+				${room.messages.length === 0 ? '<div style="padding:12px 16px;color:#484f58;font-size:12px">No messages yet</div>' :
+				room.messages.map(m => `
+					<div class="room-msg">
+						<div class="room-msg-header">
+							<span class="room-msg-sender ac-${getAgentColor(m.from)}">${m.from}</span>
+							<span class="room-msg-type ${m.type}">${m.type}</span>
+							<span class="feed-time">${new Date(m.timestamp).toLocaleTimeString()}</span>
+						</div>
+						<div class="room-msg-content">${m.content}</div>
+					</div>
+				`).join('')}
+			</div>
+			${room.decision ? `
+				<div class="room-decision">
+					<div class="room-decision-label">Decision</div>
+					<div class="room-decision-text">${room.decision.decision}</div>
+				</div>
+			` : ''}
+		</div>
+	`).join('');
+}
+
+function updateMessages() {
+	const container = document.getElementById('messagesContent');
+	if (directMessages.length === 0) return;
+
+	// Update badge
+	document.getElementById('msgBadge').innerHTML = directMessages.length > 0 ? `<span class="tab-badge">${directMessages.length}</span>` : '';
+
+	// Filter out room messages — show only DMs
+	const dms = directMessages.filter(m => !m.roomId);
+
+	if (dms.length === 0) {
+		container.innerHTML = '<div class="empty">No direct messages yet. All messages are in rooms.</div>';
+		return;
+	}
+
+	container.innerHTML = dms.map(m => `
+		<div class="dm-msg">
+			<span class="feed-time">${new Date(m.timestamp).toLocaleTimeString()}</span>
+			<span class="feed-agent ac-${getAgentColor(m.from)}">${m.from}</span>
+			<span class="dm-arrow">-></span>
+			<span class="feed-agent ac-${getAgentColor(m.to)}">${m.to}</span>
+			<span class="room-msg-type ${m.type}" style="font-size:11px">${m.type}</span>
+			<span class="feed-detail">${m.content}</span>
+		</div>
+	`).join('');
 }
 
 function updateSwimlanes() {
 	const container = document.getElementById('swimContent');
 	if (agents.size === 0) return;
-
-	const agentsToShow = selectedAgent
-		? [[selectedAgent, agents.get(selectedAgent)]]
-		: Array.from(agents.entries());
-
-	container.innerHTML = agentsToShow.map(([id, a]) => {
+	const show = selectedAgent ? [[selectedAgent, agents.get(selectedAgent)]] : Array.from(agents.entries());
+	container.innerHTML = show.map(([id, a]) => {
 		if (!a) return '';
-		return `
-			<div class="swimlane">
-				<div class="swimlane-header">
-					<span class="ac-${a.color}">${id}</span>
-					<span class="swimlane-count">${a.events.length} events</span>
-				</div>
-				${a.events.map(e => {
-					const kindClass = `k-${e.kind.split('.')[0]}`;
-					const detail = e.payload ? summarize(e.payload) : '';
-					return `<div class="feed-event" onclick="showDetail('${e.kind}', ${JSON.stringify(JSON.stringify(e.payload, null, 2))})">
-						<span class="feed-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
-						<span class="feed-kind ${kindClass}">${e.kind}</span>
-						<span class="feed-detail">${detail}</span>
-					</div>`;
-				}).join('')}
-			</div>
-		`;
+		return `<div class="swimlane">
+			<div class="swimlane-header"><span class="ac-${a.color}">${id}</span><span class="swimlane-count">${a.events.length} events</span></div>
+			${a.events.map(e => {
+				const kindClass = `k-${e.kind.split('.')[0]}`;
+				return `<div class="feed-event" onclick="showDetail('${e.kind}', ${JSON.stringify(JSON.stringify(e.payload, null, 2))})">
+					<span class="feed-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+					<span class="feed-kind ${kindClass}">${e.kind}</span>
+					<span class="feed-detail">${e.payload ? summarize(e.payload) : ''}</span>
+				</div>`;
+			}).join('')}
+		</div>`;
 	}).join('');
 }
 
@@ -381,20 +457,17 @@ function updateRoster() {
 	const container = document.getElementById('rosterContent');
 	const spawns = events.filter(e => e.kind === 'agent.spawn');
 	if (spawns.length === 0) return;
-
 	container.innerHTML = spawns.map(e => {
 		const p = e.payload || {};
 		const a = agents.get(p.agentId);
 		const status = a ? a.status : 'unknown';
-		return `
-			<div class="feed-event" style="padding:8px 12px;border-left:3px solid;border-color:var(--c,#58a6ff)">
-				<span class="feed-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
-				<span class="feed-agent ac-${getAgentColor(p.agentId)}">${p.agentId || '?'}</span>
-				<span class="feed-kind" style="color:#8b949e;min-width:100px">${p.roleName || '?'}</span>
-				<span class="agent-status ${status}" style="min-width:60px">${status}</span>
-				<span class="feed-detail">${(p.mandate || '').slice(0, 80)}</span>
-			</div>
-		`;
+		return `<div class="feed-event" style="padding:8px 12px;border-left:3px solid #58a6ff">
+			<span class="feed-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+			<span class="feed-agent ac-${getAgentColor(p.agentId)}">${p.agentId || '?'}</span>
+			<span class="feed-kind" style="color:#8b949e;min-width:100px">${p.roleName || '?'}</span>
+			<span class="agent-status ${status}" style="min-width:60px">${status}</span>
+			<span class="feed-detail">${(p.mandate || '').slice(0, 80)}</span>
+		</div>`;
 	}).join('');
 }
 
@@ -411,15 +484,10 @@ function showDetail(title, body) {
 	document.getElementById('modal').classList.add('active');
 }
 
-function closeModal() {
-	document.getElementById('modal').classList.remove('active');
-}
-
+function closeModal() { document.getElementById('modal').classList.remove('active'); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// Start
 connect();
 </script>
-
 </body>
 </html>
