@@ -192,7 +192,43 @@ function getAgentColor(agentId) {
 	return agentColors[agentId];
 }
 
-function connect() {
+async function connect() {
+	// 1. Get current mission ID
+	try {
+		const mRes = await fetch('/api/current-mission');
+		const mData = await mRes.json();
+		if (mData.missionId) {
+			missionId = mData.missionId;
+			document.getElementById('missionId').textContent = missionId;
+			document.getElementById('statStatus').textContent = 'running';
+
+			// 2. Load all existing events (catch up on history)
+			const eRes = await fetch(`/api/replay/${missionId}`);
+			const eData = await eRes.json();
+			if (eData.events && eData.events.length > 0) {
+				document.getElementById('connText').textContent = `loading ${eData.events.length} events...`;
+				for (const event of eData.events) {
+					handleEvent(event, true);
+				}
+				missionStart = eData.events[0].timestamp;
+
+				// Now do a single UI update after all history is loaded
+				updateStats();
+				updateAgentList();
+				updateRooms();
+				updateMessages();
+				updateSwimlanes();
+				updateRoster();
+
+				// Scroll feed to bottom
+				const panel = document.querySelector('.panel-container');
+				if (panel) panel.scrollTop = panel.scrollHeight;
+			}
+		}
+	} catch { /* server not ready yet */ }
+
+	// 3. Connect SSE for live updates
+	const seenIds = new Set(events.map(e => e.id));
 	const source = new EventSource('/api/stream');
 	source.onopen = () => {
 		document.getElementById('connDot').className = 'dot connected';
@@ -206,16 +242,21 @@ function connect() {
 		const data = JSON.parse(e.data);
 		if (data.type === 'mission') {
 			missionId = data.missionId;
-			missionStart = Date.now();
+			if (!missionStart || events.length === 0) missionStart = Date.now();
 			document.getElementById('missionId').textContent = missionId;
 			document.getElementById('statStatus').textContent = 'running';
 			return;
 		}
-		if (data.type === 'event') handleEvent(data.event);
+		if (data.type === 'event') {
+			// Deduplicate — don't re-add events we loaded from history
+			if (seenIds.has(data.event.id)) return;
+			seenIds.add(data.event.id);
+			handleEvent(data.event, false);
+		}
 	};
 }
 
-function handleEvent(event) {
+function handleEvent(event, isHistory = false) {
 	events.push(event);
 	const p = event.payload || {};
 
@@ -280,13 +321,17 @@ function handleEvent(event) {
 		document.getElementById('statStatus').style.color = '#f85149';
 	}
 
-	updateStats();
-	updateAgentList();
-	addToFeed(event);
-	updateRooms();
-	updateMessages();
-	updateSwimlanes();
-	updateRoster();
+	addToFeed(event, isHistory);
+
+	// Only update expensive DOM during live events or at end of history batch
+	if (!isHistory) {
+		updateStats();
+		updateAgentList();
+		updateRooms();
+		updateMessages();
+		updateSwimlanes();
+		updateRoster();
+	}
 }
 
 function updateStats() {
@@ -323,7 +368,7 @@ function selectAgent(agentId) {
 	updateSwimlanes();
 }
 
-function addToFeed(event) {
+function addToFeed(event, isHistory = false) {
 	const container = document.getElementById('liveFeed');
 	if (!feedStarted) { container.innerHTML = ''; feedStarted = true; }
 
@@ -333,7 +378,8 @@ function addToFeed(event) {
 	const detail = event.payload ? summarize(event.payload) : '';
 
 	const div = document.createElement('div');
-	div.className = 'feed-event';
+	div.className = isHistory ? 'feed-event' : 'feed-event';
+	if (!isHistory) div.style.animation = 'fadeIn 0.3s ease';
 	div.onclick = () => showDetail(event.kind, JSON.stringify(event.payload, null, 2));
 	div.innerHTML = `
 		<span class="feed-time">${time}</span>
@@ -343,8 +389,11 @@ function addToFeed(event) {
 	`;
 	container.appendChild(div);
 
-	const panel = container.closest('.panel-container');
-	if (panel) panel.scrollTop = panel.scrollHeight;
+	// Only auto-scroll for live events
+	if (!isHistory) {
+		const panel = container.closest('.panel-container');
+		if (panel) panel.scrollTop = panel.scrollHeight;
+	}
 }
 
 function summarize(p) {
