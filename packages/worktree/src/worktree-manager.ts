@@ -28,6 +28,23 @@ export class WorktreeManager {
 		const branch = `chorus/${agentId}`;
 		const worktreePath = join(this.repoPath, ".worktrees", agentId);
 
+		// Delete existing branch if leftover from a previous run
+		try {
+			this.git(`branch -D ${branch}`);
+		} catch {
+			// Branch doesn't exist — expected
+		}
+
+		// Remove existing worktree path if leftover
+		if (existsSync(worktreePath)) {
+			try {
+				this.git(`worktree remove ${worktreePath} --force`);
+			} catch {
+				rmSync(worktreePath, { recursive: true, force: true });
+			}
+			this.git("worktree prune");
+		}
+
 		// Create branch from integration branch
 		this.git(`branch ${branch} ${this.integrationBranch}`);
 

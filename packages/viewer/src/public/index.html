@@ -260,7 +260,8 @@ function handleEvent(event) {
 
 	// Track messages (DMs and room messages)
 	if (event.kind === 'message.send') {
-		const msg = { from: event.agentId, to: p.to, type: p.messageType || 'INFO', content: p.content || '', timestamp: event.timestamp, roomId: p.roomId };
+		const msgContent = p.content || (typeof p.payload === 'object' && p.payload?.content) || '';
+		const msg = { from: event.agentId, to: p.to, type: p.messageType || 'INFO', content: msgContent, timestamp: event.timestamp, roomId: p.roomId };
 		directMessages.push(msg);
 
 		// If it's a room message, add to the room
@@ -422,13 +423,13 @@ function updateMessages() {
 	}
 
 	container.innerHTML = dms.map(m => `
-		<div class="dm-msg">
+		<div class="dm-msg" style="flex-wrap:wrap">
 			<span class="feed-time">${new Date(m.timestamp).toLocaleTimeString()}</span>
 			<span class="feed-agent ac-${getAgentColor(m.from)}">${m.from}</span>
 			<span class="dm-arrow">-></span>
 			<span class="feed-agent ac-${getAgentColor(m.to)}">${m.to}</span>
 			<span class="room-msg-type ${m.type}" style="font-size:11px">${m.type}</span>
-			<span class="feed-detail">${m.content}</span>
+			<div style="width:100%;padding:6px 0 2px 76px;color:#c9d1d9;font-size:12px;white-space:pre-wrap">${m.content || '(no content)'}</div>
 		</div>
 	`).join('');
 }
