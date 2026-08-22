@@ -124,11 +124,26 @@ Call the submit_plan tool with your decomposition. Do not output free-form text.
 			streamFn: streamSimple,
 		});
 
-		await agent.prompt(mission);
-		await agent.waitForIdle();
+		// Capture errors from the LLM response
+		let lastError: string | undefined;
+		agent.subscribe((event) => {
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				if ("errorMessage" in event.message && event.message.errorMessage) {
+					lastError = event.message.errorMessage as string;
+				}
+			}
+		});
+
+		try {
+			await agent.prompt(mission);
+			await agent.waitForIdle();
+		} catch (e: any) {
+			throw new Error(`Decomposer LLM call failed: ${e.message}`);
+		}
 
 		if (!capturedPlan) {
-			throw new Error("Decomposer did not produce a plan. The LLM may not have called the submit_plan tool.");
+			const detail = lastError ? ` LLM error: ${lastError}` : "";
+			throw new Error(`Decomposer did not produce a plan.${detail}`);
 		}
 
 		return capturedPlan;
@@ -144,24 +159,26 @@ Call the submit_plan tool with your decomposition. Do not output free-form text.
 
 	private resolveModel(modelName: string): any {
 		const modelMap: Record<string, [string, string]> = {
-			opus: ["anthropic", "claude-opus-4-20250514"],
-			sonnet: ["anthropic", "claude-sonnet-4-20250514"],
-			haiku: ["anthropic", "claude-haiku-4-5-20251001"],
+			opus: ["anthropic", "claude-opus-4-6"],
+			sonnet: ["anthropic", "claude-sonnet-4-6"],
+			haiku: ["anthropic", "claude-haiku-4-5"],
+			"sonnet-4.5": ["anthropic", "claude-sonnet-4-5"],
+			"opus-4.5": ["anthropic", "claude-opus-4-5"],
 		};
 
 		const mapping = modelMap[modelName];
 		if (mapping) {
 			try {
-				return getModel(mapping[0] as any, mapping[1] as any);
+				const model = getModel(mapping[0] as any, mapping[1] as any);
+				if (model) return model;
 			} catch {
-				// Fall through
+				// Fall through to fallback
 			}
 		}
-
 		return {
 			id: modelName,
 			name: modelName,
-			api: "messages",
+			api: "anthropic-messages",
 			provider: "anthropic",
 			baseUrl: "",
 			reasoning: false,

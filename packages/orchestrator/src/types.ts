@@ -42,6 +42,8 @@ export interface MissionConfig {
 	maxTokens?: number;
 	/** @deprecated Use Approver interface instead */
 	humanApproval?: boolean;
+	/** Callback when mission ID is assigned (used by viewer for live streaming) */
+	onMissionStart?: (missionId: string) => void;
 	/** Model to use for task decomposition (default: "sonnet") */
 	decomposerModel?: string;
 	/** Timeout for individual agents in ms (default: 5 minutes) */

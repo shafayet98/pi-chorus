@@ -40,27 +40,37 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 				process.exit(1);
 			}
 
+			// Start live viewer first so it's ready for events
+			const viewerPort = parseInt(values.port ?? "3000", 10);
+			const traceDir = mkdtempSync(join(tmpdir(), "pi-chorus-trace-"));
+			const traceDb = createInMemoryDatabase();
+			const traceStore = new TraceStore(traceDb, traceDir);
+			const viewer = new ViewerServer({ traceStore, port: viewerPort });
+			const viewerUrl = await viewer.start();
+			console.log(`\n  Live viewer: ${viewerUrl}\n`);
+
 			const config: MissionConfig = {
 				description,
 				gate: values.gate ?? "echo 'No gate configured'",
 				repoPath: values.repo ?? ".",
 				catalogPath: values.catalog ?? "./roles",
 				maxAgents: values["max-agents"] ? parseInt(values["max-agents"], 10) : undefined,
+				onMissionStart: (missionId) => viewer.setMissionId(missionId),
 			};
-
-			// TODO: Use real SQLite for trace store
-			const traceDir = mkdtempSync(join(tmpdir(), "pi-chorus-trace-"));
-			const traceDb = createInMemoryDatabase();
-			const traceStore = new TraceStore(traceDb, traceDir);
 
 			const approver = values.auto ? new AutoApprover() : new InteractiveApprover();
 			const orchestrator = new Orchestrator(config, traceStore, approver);
 			const result = await orchestrator.run();
 
-			console.log(`Mission ${result.mission.id}: ${result.mission.status}`);
-			console.log(`Gate: ${result.gatePassed ? "PASSED" : "NOT RUN"}`);
-			console.log(`Time: ${result.wallTimeMs}ms`);
-			console.log(`Tokens: ${result.totalTokens}`);
+			// Keep viewer running after mission for inspection
+			console.log(`\nViewer still running at ${viewerUrl} — press Ctrl+C to stop.`);
+			process.on("SIGINT", async () => {
+				await viewer.stop();
+				process.exit(0);
+			});
+
+			// Keep process alive for viewer
+			await new Promise(() => {}); // blocks until Ctrl+C
 			break;
 		}
 
@@ -149,3 +159,9 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			break;
 	}
 }
+
+// Run when invoked directly
+runCli().catch((err) => {
+	console.error("Error:", err.message ?? err);
+	process.exit(1);
+});

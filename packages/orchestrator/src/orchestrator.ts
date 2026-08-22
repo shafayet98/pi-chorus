@@ -16,6 +16,7 @@ import { buildBriefing } from "./briefing.ts";
 import type { BriefingContext } from "./briefing.ts";
 import { AutoApprover } from "./approval.ts";
 import type { Approver } from "./approval.ts";
+import { MissionLogger } from "./logger.ts";
 
 /**
  * Configuration for the orchestrator's safety caps.
@@ -63,6 +64,7 @@ export class Orchestrator {
 
 	private readonly watchdog: Watchdog;
 	private readonly approver: Approver;
+	private readonly log = new MissionLogger();
 
 	private mission: Mission | null = null;
 	private worktreeManager: WorktreeManager | null = null;
@@ -118,6 +120,12 @@ export class Orchestrator {
 			agents: [],
 		};
 
+		this.log.mission(missionId, this.config.description);
+		this.log.catalog(roles.length, roles.map((r) => r.name));
+
+		// Notify external systems (e.g., viewer) of the mission ID
+		this.config.onMissionStart?.(missionId);
+
 		// Subscribe to BLOCKED_ON messages to track wait edges
 		const unsubscribeBus = this.messageBus.subscribeAll((msg) => {
 			if (msg.type === "BLOCKED_ON") {
@@ -129,6 +137,7 @@ export class Orchestrator {
 			if (msg.type === "DONE") {
 				this.watchdog.removeWait(msg.from);
 			}
+			this.log.messageSent(msg.from, msg.to, msg.type);
 		});
 
 		this.traceStore.emit("orchestrator", "lifecycle.start", {
@@ -153,8 +162,11 @@ export class Orchestrator {
 		if (prebuiltPlan) {
 			plan = prebuiltPlan;
 		} else {
+			this.log.decomposing();
 			plan = await this.decomposer.decompose(this.config.description, roles);
 		}
+
+		this.log.plan(plan.subtasks);
 
 		this.traceStore.emit("orchestrator", "decision.record", {
 			type: "decomposition",
@@ -180,12 +192,11 @@ export class Orchestrator {
 			};
 		}
 
-		// 5. Execute with repair loop
+		// 5. Execute in dependency waves, then gate + repair loop
 		this.mission.status = "running";
 		let repairRound = 0;
 		let gatePassed = false;
 		let totalTokens = 0;
-		const allAgentResults = new Map<string, AgentRunResult>();
 
 		while (repairRound <= this.caps.maxRepairRounds && !gatePassed) {
 			// Check wall time
@@ -196,105 +207,146 @@ export class Orchestrator {
 				break;
 			}
 
-			// Determine which subtasks to run this round
-			const subtasksToRun = repairRound === 0
-				? this.getIndependentSubtasks(plan)
-				: plan.subtasks; // On repair, re-run everything (simplified)
+			// Run all subtasks in dependency order (wave-based scheduling)
+			const allAgentResults = new Map<string, AgentRunResult>();
+			const completedSubtasks = new Set<string>();
+			const remainingSubtasks = [...plan.subtasks];
+			let waveNum = 0;
 
-			// Spawn agents for subtasks
-			const agentPromises = new Map<string, Promise<AgentRunResult>>();
-			for (const subtask of subtasksToRun) {
-				if (this.capabilityRegistry.getActiveCount() >= this.caps.maxAgents) {
-					this.traceStore.emit("orchestrator", "capability.deny", {
-						reason: "max_agents_reached",
-						subtask: subtask.name,
-					}, [], missionId);
-					continue;
-				}
-
-				const result = this.spawnAgent(subtask, missionId);
-				if (result) {
-					agentPromises.set(result.agentId, result.promise);
-				}
-			}
-
-			// Wait for all agents and handle failures
-			for (const [agentId, promise] of agentPromises) {
-				this.watchdog.recordActivity(agentId);
-				const result = await promise;
-				allAgentResults.set(agentId, result);
-				this.watchdog.removeAgent(agentId);
-
-				// Handle agent failure: release leases, attempt respawn
-				if (!result.success) {
-					this.leaseManager.release(agentId);
+			while (remainingSubtasks.length > 0) {
+				// Check wall time each wave
+				if (Date.now() - startTime > this.caps.maxWallTimeMs) {
+					this.log.wallTimeExceeded();
 					this.traceStore.emit("orchestrator", "lifecycle.crash", {
-						agentId,
-						error: result.error,
+						reason: "wall_time_exceeded",
 					}, [], missionId);
+					break;
+				}
 
-					// Find the subtask for this agent
-					const instance = this.mission!.agents.find((a) => a.id === agentId);
-					if (instance) {
-						const subtaskName = instance.mandate;
-						const attempts = (this.respawnCounts.get(subtaskName) ?? 0) + 1;
-						this.respawnCounts.set(subtaskName, attempts);
+				// Find subtasks whose dependencies are all completed
+				const readySubtasks = remainingSubtasks.filter(
+					(s) => s.dependsOn.every((dep) => completedSubtasks.has(dep)),
+				);
 
-						if (attempts <= this.maxRespawns) {
-							// Respawn with failure context
-							const respawned = this.respawnAgent(instance, result.error ?? "unknown", attempts, missionId);
-							if (respawned) {
-								agentPromises.set(respawned.agentId, respawned.promise);
+				if (readySubtasks.length === 0 && remainingSubtasks.length > 0) {
+					this.log.dependencyDeadlock(remainingSubtasks.map((s) => s.name));
+					this.traceStore.emit("orchestrator", "lifecycle.crash", {
+						reason: "dependency_deadlock",
+						stuck: remainingSubtasks.map((s) => s.name),
+					}, [], missionId);
+					break;
+				}
+
+				waveNum++;
+				this.log.wave(waveNum, readySubtasks.map((s) => ({ name: s.name, roleName: s.roleName })));
+
+				// Remove ready subtasks from remaining
+				for (const s of readySubtasks) {
+					const idx = remainingSubtasks.indexOf(s);
+					if (idx >= 0) remainingSubtasks.splice(idx, 1);
+				}
+
+				// Spawn agents for this wave
+				const wavePromises = new Map<string, { promise: Promise<AgentRunResult>; subtaskName: string }>();
+				for (const subtask of readySubtasks) {
+					if (this.capabilityRegistry.getActiveCount() >= this.caps.maxAgents) {
+						this.traceStore.emit("orchestrator", "capability.deny", {
+							reason: "max_agents_reached",
+							subtask: subtask.name,
+						}, [], missionId);
+						continue;
+					}
+
+					const result = this.spawnAgent(subtask, missionId);
+					if (result) {
+						wavePromises.set(result.agentId, { promise: result.promise, subtaskName: subtask.name });
+					}
+				}
+
+				// Wait for this wave to complete
+				for (const [agentId, { promise, subtaskName }] of wavePromises) {
+					this.watchdog.recordActivity(agentId);
+					const result = await promise;
+					allAgentResults.set(agentId, result);
+					this.watchdog.removeAgent(agentId);
+
+					if (result.success) {
+						completedSubtasks.add(subtaskName);
+						this.log.agentDone(agentId, subtaskName);
+					} else {
+						// Handle failure: release leases, attempt respawn
+						this.log.agentFailed(agentId, result.error ?? "unknown");
+						this.leaseManager.release(agentId);
+						this.traceStore.emit("orchestrator", "lifecycle.crash", {
+							agentId,
+							error: result.error,
+						}, [], missionId);
+
+						const instance = this.mission!.agents.find((a) => a.id === agentId);
+						if (instance) {
+							const attempts = (this.respawnCounts.get(subtaskName) ?? 0) + 1;
+							this.respawnCounts.set(subtaskName, attempts);
+
+							if (attempts <= this.maxRespawns) {
+								this.log.agentRespawn(agentId, attempts);
+								const respawned = this.respawnAgent(instance, result.error ?? "unknown", attempts, missionId);
+								if (respawned) {
+									wavePromises.set(respawned.agentId, { promise: respawned.promise, subtaskName });
+								}
+							} else {
+								completedSubtasks.add(subtaskName); // Mark as done to unblock dependents
 							}
-						} else {
-							this.traceStore.emit("orchestrator", "lifecycle.crash", {
-								agentId,
-								reason: "max_respawns_exceeded",
-								attempts,
-							}, [], missionId);
 						}
 					}
 				}
-			}
 
-			// Detect and resolve deadlocks
-			this.resolveDeadlocks(missionId);
+				// Detect and resolve deadlocks
+				this.resolveDeadlocks(missionId);
 
-			// Handle mid-run capability requests
-			await this.handleCapabilityRequests(missionId);
+				// Handle mid-run capability requests
+				await this.handleCapabilityRequests(missionId);
 
-			// Arbitrate any expired rooms
-			this.arbitrateExpiredRooms(missionId);
+				// Arbitrate any expired rooms
+				this.arbitrateExpiredRooms(missionId);
 
-			// Merge successful agents
-			const mergeFailures: string[] = [];
-			for (const [agentId, result] of allAgentResults) {
-				if (!result.success) continue;
+				// Merge completed agents from this wave
+				for (const [agentId, result] of allAgentResults) {
+					if (!result.success) continue;
 
-				const worktree = this.worktreeManager.get(agentId);
-				if (!worktree) continue;
+					const worktree = this.worktreeManager!.get(agentId);
+					if (!worktree) continue;
 
-				const mergeResult = this.worktreeManager.merge(agentId);
-				if (mergeResult.success) {
-					this.traceStore.emit("orchestrator", "git.merge", {
-						agentId,
-						success: true,
-						commitHash: mergeResult.commitHash,
-					}, [], missionId);
-				} else {
-					mergeFailures.push(agentId);
-					this.traceStore.emit("orchestrator", "git.conflict", {
-						agentId,
-						conflicts: mergeResult.conflicts,
-					}, [], missionId);
+					const mergeResult = this.worktreeManager!.merge(agentId);
+					this.log.merge(agentId, mergeResult.success, mergeResult.conflicts);
+					if (mergeResult.success) {
+						this.traceStore.emit("orchestrator", "git.merge", {
+							agentId,
+							success: true,
+							commitHash: mergeResult.commitHash,
+						}, [], missionId);
+					} else {
+						this.traceStore.emit("orchestrator", "git.conflict", {
+							agentId,
+							conflicts: mergeResult.conflicts,
+						}, [], missionId);
+					}
 				}
+
+				// Cleanup worktrees from this wave
+				for (const agentId of wavePromises.keys()) {
+					this.cleanupAgent(agentId);
+				}
+
+				// Clear results for next wave (merges already done)
+				allAgentResults.clear();
 			}
 
-			// Run verification gate
-			if (this.config.gate && mergeFailures.length === 0) {
+			// All waves done — run verification gate
+			if (this.config.gate) {
 				const gate = VerificationGate.fromString(this.config.gate);
 				const gateResult = gate.run(this.config.repoPath);
 
+				this.log.gate(gateResult.passed, gateResult.failedCommand);
 				if (gateResult.passed) {
 					gatePassed = true;
 					this.traceStore.emit("orchestrator", "gate.pass", {
@@ -307,17 +359,10 @@ export class Orchestrator {
 						repairRound,
 					}, [], missionId);
 					repairRound++;
+					this.log.repairRound(repairRound);
 				}
-			} else if (mergeFailures.length > 0) {
-				repairRound++;
 			} else {
-				// No gate configured — consider it passed
 				gatePassed = true;
-			}
-
-			// Cleanup worktrees for this round
-			for (const agentId of agentPromises.keys()) {
-				this.cleanupAgent(agentId);
 			}
 		}
 
@@ -333,6 +378,8 @@ export class Orchestrator {
 			repairRounds: repairRound,
 			wallTimeMs: Date.now() - startTime,
 		}, [], missionId);
+
+		this.log.missionComplete(this.mission.status, this.mission.agents.length, Date.now() - startTime);
 
 		const finalResult = {
 			mission: this.mission,
@@ -439,11 +486,12 @@ export class Orchestrator {
 		};
 		this.mission!.agents.push(instance);
 
+		this.log.agentSpawn(agentId, role.name, subtask.mandate);
 		this.traceStore.emit("orchestrator", "agent.spawn", {
 			agentId,
 			roleName: role.name,
 			mandate: subtask.mandate,
-			roleVersion: role.name, // In a real system, this would be a version hash
+			roleVersion: role.name,
 		}, [], missionId);
 
 		// Create runner
