@@ -20,22 +20,25 @@ pi-chorus run "Build a REST API with auth and a React frontend" --gate "npm test
 ## Install
 
 ```bash
-# Clone the repo
-git clone https://github.com/shafayet98/pi-chorus.git
-cd pi-chorus
-
-# Install and build (Node 22+ required)
-npm install --legacy-peer-deps
-npm run build
-
-# Link globally so you can run pi-chorus from anywhere
-npm link -w packages/cli
+npm install -g @pi-chorus/cli
 ```
 
-Verify it works:
+That's it. Requires Node 22+.
+
+Or use without installing:
 
 ```bash
-pi-chorus
+npx @pi-chorus/cli run "Build a todo app" --gate "npm test" --auto
+```
+
+### From source (for development)
+
+```bash
+git clone https://github.com/shafayet98/pi-chorus.git
+cd pi-chorus
+npm install --legacy-peer-deps
+npm run build
+npm link -w packages/cli
 ```
 
 ## Set up your API key
