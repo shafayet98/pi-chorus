@@ -398,23 +398,43 @@ function addToFeed(event, isHistory = false) {
 
 function summarize(p) {
 	if (!p) return '';
-	if (typeof p === 'string') return p;
+	if (typeof p === 'string') return p.length > 120 ? p.slice(0, 120) + '...' : p;
+
+	// Tool events — show tool name + key arg
+	if (p.toolName && p.args) {
+		const arg = p.args?.path || p.args?.paths?.join(', ') || p.args?.to || p.args?.command?.slice(0, 60) || '';
+		return `${p.toolName}${arg ? ': ' + arg : ''}`;
+	}
 	if (p.toolName) return `tool: ${p.toolName}`;
-	if (p.agentId && p.roleName) return `${p.agentId} (${p.roleName})`;
-	if (p.mandate) return p.mandate.slice(0, 80);
+
+	// Agent spawn
+	if (p.agentId && p.roleName) return `${p.agentId} (${p.roleName})${p.mandate ? ' — ' + p.mandate.slice(0, 60) : ''}`;
+
+	// Messages — show content
+	if (p.to && p.messageType && p.content) return `${p.messageType} to ${p.to}: ${p.content.slice(0, 80)}`;
+	if (p.to && p.messageType) return `${p.messageType} to ${p.to}`;
+	if (p.to && p.content) return `to ${p.to}: ${p.content.slice(0, 80)}`;
+
+	// Rooms
 	if (p.topic && p.question) return `"${p.topic}" — ${p.question.slice(0, 60)}`;
+	if (p.roomId && p.decisionId) return `room resolved (decision ${p.decisionId.slice(0, 8)})`;
+
+	// Files
 	if (p.path) return p.path;
 	if (p.paths) return p.paths.join(', ');
-	if (p.to && p.messageType) return `${p.messageType} to ${p.to}`;
-	if (p.to) return `to: ${p.to}`;
+
+	// Other
+	if (p.mandate) return p.mandate.slice(0, 80);
 	if (p.capability) return p.capability;
 	if (p.decision) return p.decision.slice(0, 80);
 	if (p.error) return p.error.slice(0, 80);
 	if (p.reason) return p.reason;
 	if (p.status) return p.status;
 	if (p.durationMs) return `${p.durationMs}ms`;
+	if (p.messageRole) return p.messageRole;
+
 	const str = JSON.stringify(p);
-	return str.length > 100 ? str.slice(0, 100) + '...' : str;
+	return str.length > 120 ? str.slice(0, 120) + '...' : str;
 }
 
 function updateRooms() {
@@ -489,18 +509,38 @@ function updateSwimlanes() {
 	const show = selectedAgent ? [[selectedAgent, agents.get(selectedAgent)]] : Array.from(agents.entries());
 	container.innerHTML = show.map(([id, a]) => {
 		if (!a) return '';
+
+		// Filter to important events only (skip noisy llm.request/response, message_update)
+		const importantEvents = a.events.filter(e =>
+			!e.kind.startsWith('llm.') || e.kind === 'llm.request'
+		);
+
 		return `<div class="swimlane">
-			<div class="swimlane-header"><span class="ac-${a.color}">${id}</span><span class="swimlane-count">${a.events.length} events</span></div>
-			${a.events.map(e => {
+			<div class="swimlane-header"><span class="ac-${a.color}">${id}</span><span class="swimlane-count">${importantEvents.length} events (${a.events.length} total)</span></div>
+			${importantEvents.map((e, i) => {
 				const kindClass = `k-${e.kind.split('.')[0]}`;
-				return `<div class="feed-event" onclick="showDetail('${e.kind}', ${JSON.stringify(JSON.stringify(e.payload, null, 2))})">
+				const detail = e.payload ? summarize(e.payload) : '';
+				// Store event index for click handler instead of inline JSON
+				return `<div class="feed-event" data-eidx="${events.indexOf(e)}" onclick="showEventDetail(this)">
 					<span class="feed-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
 					<span class="feed-kind ${kindClass}">${e.kind}</span>
-					<span class="feed-detail">${e.payload ? summarize(e.payload) : ''}</span>
+					<span class="feed-detail">${escapeHtml(detail)}</span>
 				</div>`;
 			}).join('')}
 		</div>`;
 	}).join('');
+}
+
+function showEventDetail(el) {
+	const idx = parseInt(el.dataset.eidx);
+	if (idx >= 0 && idx < events.length) {
+		const e = events[idx];
+		showDetail(e.kind + ' (' + e.agentId + ')', JSON.stringify(e.payload, null, 2));
+	}
+}
+
+function escapeHtml(str) {
+	return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function updateRoster() {
