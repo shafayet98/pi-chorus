@@ -375,7 +375,7 @@ export class AgentRunner {
 				traceStore.emit(
 					agentId,
 					"message.send",
-					{ to, messageType: type, messageId: msg.id },
+					{ to, messageType: type, messageId: msg.id, content },
 					[],
 					missionId,
 				);
