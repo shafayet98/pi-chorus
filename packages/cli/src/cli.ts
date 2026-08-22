@@ -159,9 +159,3 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			break;
 	}
 }
-
-// Run when invoked directly
-runCli().catch((err) => {
-	console.error("Error:", err.message ?? err);
-	process.exit(1);
-});
