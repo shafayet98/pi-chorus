@@ -302,11 +302,12 @@ function handleEvent(event, isHistory = false) {
 	// Track messages (DMs and room messages)
 	if (event.kind === 'message.send') {
 		const msgContent = p.content || (typeof p.payload === 'object' && p.payload?.content) || '';
-		const msg = { from: event.agentId, to: p.to, type: p.messageType || 'INFO', content: msgContent, timestamp: event.timestamp, roomId: p.roomId };
+		const roomId = p.roomId || null;
+		const msg = { from: event.agentId, to: p.to, type: p.messageType || 'INFO', content: msgContent, timestamp: event.timestamp, roomId };
 		directMessages.push(msg);
 
 		// If it's a room message, add to the room
-		if (p.roomId && rooms.has(p.roomId)) {
+		if (roomId && rooms.has(roomId)) {
 			rooms.get(p.roomId).messages.push(msg);
 		}
 	}
