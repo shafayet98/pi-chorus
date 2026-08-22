@@ -862,9 +862,11 @@ export class AgentRunner {
 
 	private resolveModel(modelName: string): any {
 		const modelMap: Record<string, [string, string]> = {
-			opus: ["anthropic", "claude-opus-4-20250514"],
-			sonnet: ["anthropic", "claude-sonnet-4-20250514"],
-			haiku: ["anthropic", "claude-haiku-4-5-20251001"],
+			opus: ["anthropic", "claude-opus-4-6"],
+			sonnet: ["anthropic", "claude-sonnet-4-6"],
+			haiku: ["anthropic", "claude-haiku-4-5"],
+			"sonnet-4.5": ["anthropic", "claude-sonnet-4-5"],
+			"opus-4.5": ["anthropic", "claude-opus-4-5"],
 			"gpt-4o": ["openai", "gpt-4o"],
 			"gpt-4.1": ["openai", "gpt-4.1"],
 		};
@@ -882,7 +884,7 @@ export class AgentRunner {
 		return {
 			id: modelName,
 			name: modelName,
-			api: "messages",
+			api: "anthropic-messages",
 			provider: "anthropic",
 			baseUrl: "",
 			reasoning: false,

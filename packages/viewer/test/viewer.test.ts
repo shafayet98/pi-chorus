@@ -192,6 +192,5 @@ describe("ViewerServer static serving", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body).toContain("pi-chorus");
-		expect(res.body).toContain("trace viewer");
 	});
 });

@@ -18,15 +18,16 @@ export interface ViewerOptions {
  * Local web server for viewing pi-chorus traces.
  *
  * Serves a REST API for events/payloads and a vanilla HTML/JS frontend.
- * Supports WebSocket for live event streaming during a run.
+ * Supports Server-Sent Events (SSE) for live streaming during a run.
  * No external dependencies — just Node's built-in http module.
  */
 export class ViewerServer {
 	private readonly traceStore: TraceStore;
 	private readonly port: number;
 	private server: ReturnType<typeof createServer> | null = null;
-	private readonly wsClients: Set<any> = new Set();
+	private readonly sseClients: Set<ServerResponse> = new Set();
 	private unsubscribeTrace?: () => void;
+	private currentMissionId: string | null = null;
 
 	constructor(options: ViewerOptions) {
 		this.traceStore = options.traceStore;
@@ -35,6 +36,13 @@ export class ViewerServer {
 		if (!options.dryRun) {
 			this.setupLiveStreaming();
 		}
+	}
+
+	/** Set the active mission ID (auto-shown in the frontend). */
+	setMissionId(missionId: string): void {
+		this.currentMissionId = missionId;
+		// Notify all SSE clients of the new mission
+		this.broadcast({ type: "mission", missionId });
 	}
 
 	/** Start the server. */
@@ -51,6 +59,10 @@ export class ViewerServer {
 	/** Stop the server. */
 	async stop(): Promise<void> {
 		this.unsubscribeTrace?.();
+		for (const client of this.sseClients) {
+			client.end();
+		}
+		this.sseClients.clear();
 		return new Promise((resolve) => {
 			if (this.server) {
 				this.server.close(() => resolve());
@@ -65,9 +77,21 @@ export class ViewerServer {
 		const url = new URL(req.url ?? "/", `http://localhost:${this.port}`);
 		const path = url.pathname;
 
-		// CORS headers for local development
+		// CORS headers
 		res.setHeader("Access-Control-Allow-Origin", "*");
 		res.setHeader("Access-Control-Allow-Methods", "GET");
+
+		// SSE endpoint
+		if (path === "/api/stream") {
+			this.handleSSE(res);
+			return;
+		}
+
+		// Current mission ID
+		if (path === "/api/current-mission") {
+			this.json(res, 200, { missionId: this.currentMissionId });
+			return;
+		}
 
 		// API routes
 		if (path.startsWith("/api/")) {
@@ -77,6 +101,32 @@ export class ViewerServer {
 
 		// Static files
 		this.serveStatic(path, res);
+	}
+
+	private handleSSE(res: ServerResponse): void {
+		res.writeHead(200, {
+			"Content-Type": "text/event-stream",
+			"Cache-Control": "no-cache",
+			Connection: "keep-alive",
+		});
+
+		// Send current mission ID immediately
+		if (this.currentMissionId) {
+			res.write(`data: ${JSON.stringify({ type: "mission", missionId: this.currentMissionId })}\n\n`);
+		}
+
+		this.sseClients.add(res);
+
+		res.on("close", () => {
+			this.sseClients.delete(res);
+		});
+	}
+
+	private broadcast(data: unknown): void {
+		const message = `data: ${JSON.stringify(data)}\n\n`;
+		for (const client of this.sseClients) {
+			client.write(message);
+		}
 	}
 
 	private handleApi(path: string, url: URL, res: ServerResponse): void {
@@ -113,18 +163,13 @@ export class ViewerServer {
 	}
 
 	private handleMissions(res: ServerResponse): void {
-		// Get unique mission IDs from events
-		// Since we don't have a missions table, extract from events
-		const allEvents = this.traceStore.getEventsByMission("*");
-		// This won't work with our simple query — let's use a different approach
-		// For now, missions must be listed by the caller
-		this.json(res, 200, { missions: [] });
+		const missions = this.traceStore.listMissions();
+		this.json(res, 200, { missions });
 	}
 
 	private handleEvents(missionId: string, url: URL, res: ServerResponse): void {
 		const events = this.traceStore.getEventsByMission(missionId);
 
-		// Optional filtering
 		const kind = url.searchParams.get("kind");
 		const agentId = url.searchParams.get("agent");
 
@@ -158,25 +203,15 @@ export class ViewerServer {
 		this.json(res, 200, { chain });
 	}
 
-	/**
-	 * Replay: returns all events for a mission in causal order with payloads resolved.
-	 * This is the key data structure for deterministic replay.
-	 */
 	private handleReplay(missionId: string, res: ServerResponse): void {
 		const events = this.traceStore.getEventsByMission(missionId);
-
 		const enriched = events.map((event) => ({
 			...event,
 			payload: this.traceStore.getPayload(event.payloadHash),
 		}));
-
 		this.json(res, 200, { events: enriched });
 	}
 
-	/**
-	 * Roster timeline: agents appearing over time, each linked to the event
-	 * that caused its spawn.
-	 */
 	private handleRoster(missionId: string, res: ServerResponse): void {
 		const events = this.traceStore.getEventsByMission(missionId);
 		const spawnEvents = events.filter((e) => e.kind === "agent.spawn");
@@ -196,9 +231,6 @@ export class ViewerServer {
 		this.json(res, 200, { roster });
 	}
 
-	/**
-	 * Swimlanes: per-agent event timelines grouped by agent.
-	 */
 	private handleSwimlanes(missionId: string, res: ServerResponse): void {
 		const events = this.traceStore.getEventsByMission(missionId);
 
@@ -248,8 +280,12 @@ export class ViewerServer {
 
 	private setupLiveStreaming(): void {
 		this.unsubscribeTrace = this.traceStore.onEvent((event) => {
-			// In a full implementation, this would push to WebSocket clients
-			// For now, events are available via polling the API
+			// Stream every event to connected SSE clients
+			const payload = this.traceStore.getPayload(event.payloadHash);
+			this.broadcast({
+				type: "event",
+				event: { ...event, payload },
+			});
 		});
 	}
 }
