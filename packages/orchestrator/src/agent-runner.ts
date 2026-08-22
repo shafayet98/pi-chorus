@@ -675,6 +675,15 @@ export class AgentRunner {
 				// Record the turn
 				const withinBudget = roomManager.recordTurn(room_id);
 
+				// Emit trace event for the room message
+				traceStore.emit(agentId, "message.send", {
+					to: "room:" + room_id,
+					messageType: type,
+					content: msgContent,
+					roomId: room_id,
+					roomTopic: room.topic,
+				}, [], missionId);
+
 				// Broadcast to room members via message bus
 				if (messageBus) {
 					for (const member of room.members) {
