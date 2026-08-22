@@ -6,6 +6,7 @@ import { Orchestrator, AutoApprover, InteractiveApprover } from "@pi-chorus/orch
 import type { MissionConfig } from "@pi-chorus/orchestrator";
 import { TraceStore, createInMemoryDatabase } from "@pi-chorus/trace";
 import { ViewerServer } from "@pi-chorus/viewer";
+import { runInit } from "./init.ts";
 
 /**
  * CLI entry point for pi-chorus.
@@ -33,6 +34,11 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 	const command = positionals[0];
 
 	switch (command) {
+		case "init": {
+			await runInit();
+			break;
+		}
+
 		case "run": {
 			const description = positionals[1];
 			if (!description) {
@@ -144,6 +150,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 			console.log("pi-chorus - Self-organizing multi-agent coding system");
 			console.log("");
 			console.log("Commands:");
+			console.log("  init                            Set up a new project (interactive)");
 			console.log("  run <description> --gate <cmd>  Run a mission");
 			console.log("  view [--port 3000]              Launch trace viewer");
 			console.log("  replay <mission-id>             Replay a mission trace");
